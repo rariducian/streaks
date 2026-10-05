@@ -92,6 +92,9 @@ function buildShell() {
   const scrub = root.querySelector('#fv-scrub'); let was = false;
   on(scrub, 'input', () => { if (!S.scrubbing) { S.scrubbing = true; was = S.playing; setPlaying(false); } const lv = curLevel(); if (lv) { S.t = (scrub.value / 1000) * lv.duration; drawFrame(); } });
   on(scrub, 'change', () => { S.scrubbing = false; if (was) setPlaying(true); });
+  // Scrolling the notes shrinks the 3D stage so more text fits. Hysteresis stops it flickering at the edge.
+  const body = root.querySelector('#fv-body');
+  on(body, 'scroll', () => { const y = body.scrollTop, m = sheet.classList.contains('fv-mini'); if (!m && y > 40) sheet.classList.add('fv-mini'); else if (m && y < 8) sheet.classList.remove('fv-mini'); }, { passive: true });
   on(document, 'keydown', (e) => {
     if (e.key === 'Escape' && !document.querySelector('#ask-root .asksheet')) { e.preventDefault(); closeForm(tok); }
     else if (e.key === 'Tab') { const f = [...sheet.querySelectorAll('button:not([disabled]), input, [role=slider]')].filter((x) => x.offsetParent !== null); if (!f.length) return; const i = f.indexOf(document.activeElement), n = e.shiftKey ? i - 1 : i + 1; if (i === -1 || n < 0 || n >= f.length) { e.preventDefault(); f[(n + f.length) % f.length].focus(); } }

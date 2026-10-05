@@ -425,6 +425,12 @@ test('weeklyVolume uses Monday weeks', () => {
   assert.equal(L.weeklyVolume(s, '2026-03-12').length, 8);
 });
 
+test('weeklyVolume reps leave out core seconds', () => {
+  const s = fresh();
+  s.sessions = [{ date: '2026-03-10', sets: [...sets('hpush', 0, 10, 2), ...sets('core', 0, 30, 2)] }];
+  assert.deepEqual(L.weeklyVolume(s, '2026-03-12', 1)[0], { weekStart: '2026-03-09', sets: 4, reps: 20 });
+});
+
 test('growthOffer', () => {
   const today = '2026-03-18';
   const five = (ws) => range(ws, 5);
@@ -679,7 +685,7 @@ test('repTotals: today, week (Monday start), 30 days and all time windows', () =
   assert.equal(h.week, 30);
   assert.equal(h.month, 100);
   assert.equal(h.allTime, 150);
-  assert.equal(h.name, 'Horizontal push');
+  assert.equal(h.name, 'Push-up');
   assert.equal(h.unit, 'reps');
   assert.deepEqual(h.levels.map((l) => [l.level, l.name, l.allTime]), [[1, 'Deficit push-up (hands on books)', 120], [0, 'Standard push-up', 30]]);
   const sq = T(L.repTotals(s, today), 'squat');

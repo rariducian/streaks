@@ -9,7 +9,7 @@ const TABLE_RULE = 'Test the table first. It must not tip.';
 
 const MOVE_LIST = [
   {
-    id: 'hpush', name: 'Horizontal push', unit: 'reps', range: [6, 15],
+    id: 'hpush', name: 'Push-up', unit: 'reps', range: [6, 15],
     levels: [
       L('Standard push-up', 'Hands under shoulders, body in one straight line.'),
       L('Deficit push-up (hands on books)', 'Hands on books, lower until your chest passes them.'),

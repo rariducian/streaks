@@ -40,6 +40,7 @@ const withSettings = (st, patch) => { const n = structuredClone(st); Object.assi
 const I = {
   today: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="4"/><path d="M8 3v4M16 3v4M8 13l2.8 2.8L16 10.5"/></svg>',
   fast: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 8.5V13l3 2M9.5 2.8h5"/></svg>',
+  fitness: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><path d="M6.5 7.5v9M17.5 7.5v9M3.5 10v4M20.5 10v4M6.5 12h11"/></svg>',
   progress: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><path d="M5 20V12M12 20V5M19 20v-5"/></svg>',
   plus: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
   gear: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
@@ -118,7 +119,7 @@ function streakCard({ label, st, dates, pct, color, meta, now, attr }) {
 function renderChrome() {
   $('#header').innerHTML = `<div class="brand"><button class="avatar" data-act="settings" aria-label="Settings">M</button><div class="wordmark">streaks&#10022;</div></div>
     <div class="pillbar"><button data-act="quick" aria-label="Quick log">${I.plus}</button><button data-act="settings" aria-label="Settings">${I.gear}</button></div>`;
-  const tabs = [['today', 'Today', I.today], ['fast', 'Fast', I.fast], ['progress', 'Progress', I.progress]];
+  const tabs = [['today', 'Today', I.today], ['fitness', 'Fitness', I.fitness], ['fast', 'Fast', I.fast], ['progress', 'Progress', I.progress]];
   $('#tabbar').innerHTML = tabs.map(([id, l, ic]) => `<button class="${tab === id ? 'on' : ''}" data-act="tab" data-tab="${id}"${tab === id ? ' aria-current="page"' : ''}>${ic}<span>${l}</span></button>`).join('');
   document.documentElement.style.setProperty('--tabh', ($('#tabbar').offsetHeight || 64) + 'px');
   renderPill();
@@ -134,26 +135,30 @@ function renderPill() {
 }
 
 /* ---------- Today ---------- */
+// Today's session card. Shown on Today and on Fitness.
+function sessionHero(done) {
+  const plan = sessionPlan(state);
+  const lines = plan.moves.map((m) => `<div class="line">${I.bolt}<span>${esc(m.levelName)} &middot; ${m.needsCalibration ? 'test set first' : m.target + (m.unit === 'sec' ? ' sec' : ' reps') + (m.perSide ? ' each side' : '')}</span></div>`).join('');
+  const buttons = done
+    ? `<div class="donebar">Done today &#10003;</div><div class="sub-actions"><button class="link" data-act="startSession">Train again</button><button class="link" data-act="startMin">Minimum day (3 min)</button></div>`
+    : `<button class="btn block" data-act="startSession">Start</button><div class="sub-actions"><button class="link" data-act="startMin">Minimum day (3 min)</button></div>`;
+  return `<div class="section"><h2 class="title">Today's session</h2>
+   <div class="hero"><div class="rowcard"><div class="poster ${esc(plan.dayId)}">${esc((dayShort[plan.dayId] || plan.dayName).toUpperCase())}<span class="spill o">Up next</span></div>
+    <div class="rowbody"><div class="meta">Next in rotation</div><div class="rtitle">${esc(plan.dayName)} &middot; EMOM ${plan.minutes}</div>
+    <div class="line">${I.clock}<span>${plan.minutes} min &middot; ${plan.workSec} s work, ${60 - plan.workSec} s rest</span></div>${lines}</div></div>${buttons}</div></div>`;
+}
 function viewToday() {
   const today = todayStr(), now = new Date();
   const trDates = trainingDates(state), fsDates = fastingDates(state, now);
   const tr = computeStreak(trDates, today);
   const fs = computeStreak(fsDates, today);
-  const plan = sessionPlan(state);
   const run = runningFast(state);
   const minH = state.settings.fastMinHours;
   const fHrs = run ? (now - new Date(run.start)) / 3.6e6 : 0;
   const fsPct = fs.doneToday ? 1 : run ? Math.min(1, fHrs / minH) : 0;
   const fsMeta = fs.doneToday ? 'Counted today' : run ? `${fmtH(fHrs)} of ${minH}h` : 'No fast yet today';
-  const lines = plan.moves.map((m) => `<div class="line">${I.bolt}<span>${esc(m.levelName)} &middot; ${m.needsCalibration ? 'test set first' : m.target + (m.unit === 'sec' ? ' sec' : ' reps') + (m.perSide ? ' each side' : '')}</span></div>`).join('');
   const done = tr.doneToday;
-  const buttons = done
-    ? `<div class="donebar">Done today &#10003;</div><div class="sub-actions"><button class="link" data-act="startSession">Train again</button><button class="link" data-act="startMin">Minimum day (3 min)</button></div>`
-    : `<button class="btn block" data-act="startSession">Start</button><div class="sub-actions"><button class="link" data-act="startMin">Minimum day (3 min)</button></div>`;
-  let html = `<div class="section"><h2 class="title">Today's session</h2>
-   <div class="hero"><div class="rowcard"><div class="poster ${esc(plan.dayId)}">${esc((dayShort[plan.dayId] || plan.dayName).toUpperCase())}<span class="spill o">Up next</span></div>
-    <div class="rowbody"><div class="meta">Next in rotation</div><div class="rtitle">${esc(plan.dayName)} &middot; EMOM ${plan.minutes}</div>
-    <div class="line">${I.clock}<span>${plan.minutes} min &middot; ${plan.workSec} s work, ${60 - plan.workSec} s rest</span></div>${lines}</div></div>${buttons}</div></div>
+  let html = `${sessionHero(done)}
   <div class="section"><div class="rings">${streakCard({ label: 'Training', st: tr, dates: trDates, pct: done ? 1 : 0, color: 'var(--green)', meta: done ? 'Done today' : 'Not trained yet', now })}${streakCard({ label: 'Fasting', st: fs, dates: fsDates, pct: fsPct, color: 'var(--purple)', meta: fsMeta, now, attr: 'data-fring' })}</div></div>`;
   if (!run) html += `<div class="section"><h2 class="title"><button class="titlebtn" data-act="tab" data-tab="fast">Fast <span class="chev" aria-hidden="true">&rsaquo;</span></button></h2>
    <button class="fastchip" data-act="tab" data-tab="fast"><div class="poster fast">FAST</div><div><div class="t">Start a fast</div><div class="small muted">Goal ${state.settings.fastGoalHours}h</div></div></button></div>`;
@@ -262,12 +267,12 @@ function heatSvg(dates, color, name) {
 }
 function volumeChart(v) {
   const W = 340, H = 150, pl = 26, pb = 20, pt = 8, bw = (W - pl) / v.length;
-  const max = Math.max(...v.map((x) => x.sets), 5) * 1.15, y = (n) => pt + (H - pt - pb) * (1 - n / max);
+  const max = Math.max(...v.map((x) => x.reps), 5) * 1.15, y = (n) => pt + (H - pt - pb) * (1 - n / max);
   const tops = [0, Math.round(max / 2), Math.floor(max)].filter((n, i, a) => a.indexOf(n) === i);
   const grid = tops.map((n) => `<line x1="${pl}" x2="${W}" y1="${y(n)}" y2="${y(n)}" stroke="var(--line)"/><text x="${pl - 4}" y="${y(n) + 3}" text-anchor="end">${n}</text>`).join('');
-  const bars = v.map((x, i) => { const bx = pl + i * bw + 5, bh = (H - pt - pb) * x.sets / max, d = parseDate(x.weekStart);
-    return `<rect x="${bx}" y="${H - pb - bh}" width="${bw - 10}" height="${Math.max(bh, 1)}" rx="5" fill="url(#vg)"/>${x.sets ? `<text x="${bx + (bw - 10) / 2}" y="${H - pb - bh - 3}" text-anchor="middle" style="fill:var(--text)">${x.sets}</text>` : ''}<text x="${bx + (bw - 10) / 2}" y="${H - 5}" text-anchor="middle">${d.getDate()}/${d.getMonth() + 1}</text>`; }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Sets per week over the last ${v.length} weeks, oldest first: ${v.map((x) => x.sets).join(', ')}."><defs><linearGradient id="vg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF9A3C"/><stop offset="1" stop-color="#EF4036"/></linearGradient></defs>${grid}${bars}</svg>`;
+  const bars = v.map((x, i) => { const bx = pl + i * bw + 5, bh = (H - pt - pb) * x.reps / max, d = parseDate(x.weekStart);
+    return `<rect x="${bx}" y="${H - pb - bh}" width="${bw - 10}" height="${Math.max(bh, 1)}" rx="5" fill="url(#vg)"/>${x.reps ? `<text x="${bx + (bw - 10) / 2}" y="${H - pb - bh - 3}" text-anchor="middle" style="fill:var(--text)">${x.reps}</text>` : ''}<text x="${bx + (bw - 10) / 2}" y="${H - 5}" text-anchor="middle">${d.getDate()}/${d.getMonth() + 1}</text>`; }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Reps per week over the last ${v.length} weeks, oldest first: ${v.map((x) => x.reps).join(', ')}. Core time is not included."><defs><linearGradient id="vg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF9A3C"/><stop offset="1" stop-color="#EF4036"/></linearGradient></defs>${grid}${bars}</svg>`;
 }
 function evLabel(e) {
   const n = moveName(e.moveId), lv = levelName(e);
@@ -304,23 +309,28 @@ function repCard(today) {
   return `<div class="section"><h2 class="title">Rep totals</h2><div class="reps"><p class="rt-head tnum">${head}</p>
     <div class="seg" role="radiogroup" aria-label="Rep totals period">${seg}</div>${rows}<p class="rt-note">Both sides counted. Core shows time held.</p></div></div>`;
 }
-function viewProgress() {
+function viewFitness() {
   const mp = moveProgress(state), today = todayStr();
+  const done = computeStreak(trainingDates(state), today).doneToday;
+  const vol = weeklyVolume(state, today, 8), cur = vol[vol.length - 1].reps, prev = vol.length > 1 ? vol[vol.length - 2].reps : 0;
+  const diff = cur - prev;
+  const vsum = !cur && !prev ? 'No reps logged this week or last week.'
+    : !cur ? `No reps yet this week. Last week you did ${plural(prev, 'rep')}.`
+    : !prev ? `${plural(cur, 'rep')} this week, none last week.`
+    : `${plural(cur, 'rep')} this week, ${diff === 0 ? 'the same as last week' : `${Math.abs(diff)} ${diff > 0 ? 'more' : 'fewer'} than last week`}.`;
+  return `${sessionHero(done)}<div class="section"><h2 class="title">Levels</h2>
+    ${mp.map((m) => `<div class="lvl${lvlAttrs(m)}><div class="top"><span class="nm">${esc(m.name)}</span><span class="tg">Target ${m.target}/${m.range[1]}${m.unit === 'sec' ? 's' : ''}</span></div>
+    <div class="ln">Level ${m.level + 1} of ${m.levelsTotal} &middot; ${esc(m.levelName)}${m.best ? ` &middot; best ${m.best}` : ''}</div><div class="bar"><i style="width:${Math.max(3, Math.min(100, m.pct))}%"></i></div></div>`).join('')}</div>
+  ${repCard(today)}
+  <div class="section"><h2 class="title">Weekly volume</h2><p class="chartsum">${vsum} Core time is not included.</p><div class="chart">${volumeChart(vol)}</div></div>`;
+}
+function viewProgress() {
+  const today = todayStr();
   const tdates = trainingDates(state), fdates = fastingDates(state);
   const ev = recentEvents(state, 10);
   const trSt = computeStreak(tdates, today), fsSt = computeStreak(fdates, today);
-  const vol = weeklyVolume(state, today, 8), cur = vol[vol.length - 1].sets, prev = vol.length > 1 ? vol[vol.length - 2].sets : 0;
-  const diff = cur - prev;
-  const vsum = !cur && !prev ? 'No sets logged this week or last week.'
-    : !cur ? `No sets yet this week. Last week you did ${plural(prev, 'set')}.`
-    : !prev ? `${plural(cur, 'set')} this week, none last week.`
-    : `${plural(cur, 'set')} this week, ${diff === 0 ? 'the same as last week' : `${Math.abs(diff)} ${diff > 0 ? 'more' : 'fewer'} than last week`}.`;
   const trN = daysIn(tdates, 7, today), fsN = daysIn(fdates, 7, today);
-  return `${repCard(today)}<div class="section"><h2 class="title">Levels</h2>
-    ${mp.map((m) => `<div class="lvl${lvlAttrs(m)}><div class="top"><span class="nm">${esc(m.name)}</span><span class="tg">Target ${m.target}/${m.range[1]}${m.unit === 'sec' ? 's' : ''}</span></div>
-    <div class="ln">Level ${m.level + 1} of ${m.levelsTotal} &middot; ${esc(m.levelName)}${m.best ? ` &middot; best ${m.best}` : ''}</div><div class="bar"><i style="width:${Math.max(3, Math.min(100, m.pct))}%"></i></div></div>`).join('')}</div>
-  <div class="section"><h2 class="title">Weekly volume</h2><p class="chartsum">${vsum}</p><div class="chart">${volumeChart(vol)}</div></div>
-  <div class="section"><h2 class="title">Highlights</h2><div class="feed">${ev.map((e) => { const [c, ic, t] = evLabel(e); return `<div class="ev"><div class="bd ${c}">${ic}</div><div><div>${t}</div><div class="when">${esc(dmy(new Date(e.at)))}</div></div></div>`; }).join('') || '<div class="empty">Your level-ups and personal bests will show here.</div>'}</div></div>
+  return `<div class="section"><h2 class="title">Highlights</h2><div class="feed">${ev.map((e) => { const [c, ic, t] = evLabel(e); return `<div class="ev"><div class="bd ${c}">${ic}</div><div><div>${t}</div><div class="when">${esc(dmy(new Date(e.at)))}</div></div></div>`; }).join('') || '<div class="empty">Your level-ups and personal bests will show here.</div>'}</div></div>
   <div class="section"><h2 class="title">Consistency</h2>
     <div class="heat"><div class="hh"><span>Training</span><span class="muted">Best ${trSt.longest}</span></div><p class="chartsum">${trN} of the last 7 days.</p>${heatSvg(tdates, 'var(--green)', 'Training')}</div>
     <div class="heat"><div class="hh"><span>Fasting</span><span class="muted">Best ${fsSt.longest}</span></div><p class="chartsum">${fsN} of the last 7 days.</p>${heatSvg(fdates, 'var(--purple)', 'Fasting')}
@@ -381,7 +391,7 @@ function renderSheet() {
 function render() {
   renderChrome();
   const v = $('#view');
-  v.innerHTML = tab === 'fast' ? viewFast() : tab === 'progress' ? viewProgress() : viewToday();
+  v.innerHTML = tab === 'fast' ? viewFast() : tab === 'progress' ? viewProgress() : tab === 'fitness' ? viewFitness() : viewToday();
   renderSheet();
 }
 

@@ -357,7 +357,8 @@ export function weeklyVolume(state, today, weeks = 8) {
     for (const se of state.sessions) {
       if (se.date >= weekStart && se.date <= weekEnd) {
         sets += se.sets.length;
-        reps += se.sets.reduce((a, b) => a + (b.reps || 0), 0);
+        // Reps only: core is logged in seconds, so it is left out.
+        reps += se.sets.reduce((a, b) => a + (MOVES[b.moveId] && MOVES[b.moveId].unit === 'sec' ? 0 : (b.reps || 0)), 0);
       }
     }
     out.push({ weekStart, sets, reps });

@@ -117,7 +117,7 @@ h2.title .chev{color:var(--muted);font-weight:400;font-size:1.294rem;line-height
 
 /* tab bar */
 #tabbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));z-index:20;display:flex;gap:2px;padding:5px;border-radius:999px;background:var(--tab-bg);-webkit-backdrop-filter:saturate(180%) blur(22px);backdrop-filter:saturate(180%) blur(22px);box-shadow:var(--pill-shadow)}
-#tabbar button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 20px 6px;border-radius:999px;color:var(--muted);font-size:11px;font-weight:600;min-width:86px}
+#tabbar button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 14px 6px;border-radius:999px;color:var(--muted);font-size:11px;font-weight:600;min-width:76px}
 #tabbar button.on{background:var(--inner);color:var(--text)}
 #tabbar .ic{width:23px;height:23px}
 
@@ -252,7 +252,7 @@ textarea.note-in{width:100%;background:var(--card);border:0;border-radius:12px;p
 #toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));transform:translate(-50%,20px);background:var(--btn);color:var(--btn-text);padding:10px 18px;border-radius:99px;font-size:0.824rem;font-weight:600;opacity:0;pointer-events:none;transition:.25s;z-index:80;max-width:90vw;text-align:center}
 #toast.show{opacity:1;transform:translate(-50%,0)}
 body.has-pill #toast{bottom:calc(150px + env(safe-area-inset-bottom))}
-@media (max-width:360px){.ringwrap,.ringwrap svg{width:104px;height:104px}.big .num{font-size:1.647rem}#tabbar button{padding:8px 14px 6px;min-width:76px}}
+@media (max-width:360px){.ringwrap,.ringwrap svg{width:104px;height:104px}.big .num{font-size:1.647rem}#tabbar button{padding:8px 10px 6px;min-width:68px}}
 @media (min-width:600px){body{background:var(--bg)}}
 
 /* action sheet (ask) */
@@ -338,6 +338,11 @@ body.fv-lock{overflow:hidden}
   .fv-reset{min-height:26px;font-size:8.5px;padding:0 9px}
   .fv-live{left:12px;right:12px;bottom:auto;top:72px}
 }
+/* scrolled into the notes: smaller stage, only the figure and the dial */
+.fv-stage{transition:height .22s ease}
+.fv-mini .fv-stage{height:30%}
+.fv-mini .fv-tools,.fv-mini .fv-ttl,.fv-mini .fv-ro,.fv-mini .fv-dh,.fv-mini .fv-reset,.fv-mini .fv-labels{display:none}
+@media (prefers-reduced-motion:reduce){.fv-stage{transition:none}}
 .fv-stage button:focus-visible{outline:2px solid var(--fv-ink);outline-offset:2px}
 .fv-cap{padding:7px 13px;border-radius:999px;background:var(--surface);box-shadow:var(--pill-shadow);font-size:0.824rem;font-weight:650;min-height:32px}
 .fv-cap[aria-pressed="true"]{background:var(--btn);color:var(--btn-text)}

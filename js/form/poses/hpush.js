@@ -1,4 +1,4 @@
-// Horizontal push ladder: form data for every level. Keyframes come from hpush.gen.js (see tools/author-hpush.mjs).
+// Push-up ladder: form data for every level. Keyframes come from hpush.gen.js (see tools/author-hpush.mjs).
 // Contract per level (all levels of every move follow this):
 //   { duration, loop:true, keyT, contacts:[point names], support?:{point:y}, props:[...], keyframes:[{t, root:{pos,rot}, joints}],
 //     toesCurled?, checks:{...}, cues:{ setup[2-3], movement[2-4], mistakes:[{mistake, fix, wrongPose?, highlight?}] (2-3), stopIf:{sign, easier} }, sources:[...] }
