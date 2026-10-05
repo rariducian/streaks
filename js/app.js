@@ -7,6 +7,8 @@ import {
   acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals
 } from './logic.js';
 import { load, save, exportJSON, importJSON } from './store.js';
+import { ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend } from './game/engine.js';
+import { viewTower, mountTower, unmountTower, refreshTowerUi } from './game/view.js';
 
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -41,6 +43,7 @@ const I = {
   today: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="4"/><path d="M8 3v4M16 3v4M8 13l2.8 2.8L16 10.5"/></svg>',
   fast: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 8.5V13l3 2M9.5 2.8h5"/></svg>',
   fitness: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><path d="M6.5 7.5v9M17.5 7.5v9M3.5 10v4M20.5 10v4M6.5 12h11"/></svg>',
+  tower: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><path d="M6 21V9h12v12M4 9V4.5h3V6h2.5V4.5h5V6H17V4.5h3V9M10 21v-4.5a2 2 0 0 1 4 0V21M3 21h18"/></svg>',
   progress: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><path d="M5 20V12M12 20V5M19 20v-5"/></svg>',
   plus: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
   gear: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
@@ -119,7 +122,7 @@ function streakCard({ label, st, dates, pct, color, meta, now, attr }) {
 function renderChrome() {
   $('#header').innerHTML = `<div class="brand"><button class="avatar" data-act="settings" aria-label="Settings">M</button><div class="wordmark">streaks&#10022;</div></div>
     <div class="pillbar"><button data-act="quick" aria-label="Quick log">${I.plus}</button><button data-act="settings" aria-label="Settings">${I.gear}</button></div>`;
-  const tabs = [['today', 'Today', I.today], ['fitness', 'Fitness', I.fitness], ['fast', 'Fast', I.fast], ['progress', 'Progress', I.progress]];
+  const tabs = [['today', 'Today', I.today], ['fitness', 'Fitness', I.fitness], ['tower', 'Tower', I.tower], ['fast', 'Fast', I.fast], ['progress', 'Progress', I.progress]];
   $('#tabbar').innerHTML = tabs.map(([id, l, ic]) => `<button class="${tab === id ? 'on' : ''}" data-act="tab" data-tab="${id}"${tab === id ? ' aria-current="page"' : ''}>${ic}<span>${l}</span></button>`).join('');
   document.documentElement.style.setProperty('--tabh', ($('#tabbar').offsetHeight || 64) + 'px');
   renderPill();
@@ -396,8 +399,10 @@ function renderSheet() {
 function render() {
   renderChrome();
   const v = $('#view');
-  v.innerHTML = tab === 'fast' ? viewFast() : tab === 'progress' ? viewProgress() : tab === 'fitness' ? viewFitness() : viewToday();
+  if (tab === 'tower') { syncRewards(state); offlineCatchUp(state); }
+  v.innerHTML = tab === 'fast' ? viewFast() : tab === 'progress' ? viewProgress() : tab === 'fitness' ? viewFitness() : tab === 'tower' ? viewTower(state) : viewToday();
   renderSheet();
+  if (tab === 'tower' && !sess && !sheet) mountTower(state, save); else unmountTower();
 }
 
 /* ---------- audio / wake lock ---------- */
@@ -428,6 +433,7 @@ function unlockScreen() { try { if (wl) wl.release(); } catch (e) { /* ignore */
 
 /* ---------- session flow ---------- */
 function openSession(minimum) {
+  unmountTower();
   const plan = sessionPlan(state, { minimum });
   const queue = minimum ? [] : plan.moves.filter((m) => m.needsCalibration).map((m) => m.moveId);
   sess = { phase: queue.length ? 'calib' : 'ready', minimum, plan, queue, ci: 0, calib: null, wlOk: null };
@@ -520,8 +526,9 @@ function renderSession() {
       <table class="sumtable"><tr><th>Min</th><th>Move</th><th>${'Logged'}</th></tr>${sm.rows.map((r) => `<tr><td>${r.i}</td><td>${esc(r.name)}<div class="small muted">${esc(r.lvl)}${r.side ? ' &middot; ' + sideWord(r.side) : ''}</div></td><td>${r.reps}${r.unit === 'sec' ? 's' : ''}</td></tr>`).join('')}</table>
       ${sm.totals && sm.totals.length ? `<div class="sumtot"><div class="small muted">This session</div>${sm.totals.map((t) => `${esc(noun(t.moveId))} <b class="tnum">${fmtAmt(t.total, t.unit)}</b>${t.bothSides ? ' <span class="muted">(both sides)</span>' : ''}`).join(' &middot; ')}</div>` : ''}
       ${sm.events.map((e) => { const [, ic, t] = evLabel(e); return `<div class="evcard">${ic} ${t}</div>`; }).join('')}
+      ${sm.sweat > 0 ? `<div class="evcard"><span aria-hidden="true">&#9889;</span> +${sm.sweat} Sweat earned &middot; spend it in Tower</div>` : ''}
       ${sm.minimum ? '<p class="small muted">Minimum days keep your streak. They do not change your targets.</p>' : ''}`;
-    bot = `<button class="btn block" data-act="closeSess">Done</button>`;
+    bot = sm.sweat > 0 ? `<div class="two"><button class="btn soft" data-act="closeSess">Done</button><button class="btn" data-act="toTower">Open Tower</button></div>` : `<button class="btn block" data-act="closeSess">Done</button>`;
   }
   const scroll = o.firstElementChild ? o.firstElementChild.scrollTop : 0;
   o.innerHTML = `<div class="ov">${top}<div class="ov-mid">${mid}</div><div class="ov-bot">${bot}</div></div>`;
@@ -566,7 +573,13 @@ function finishRun(completed) {
   const res = finishSession(state, { startedAt: new Date(s.startMs).toISOString(), endedAt: new Date().toISOString(), minimum, sets, minutes: p.minutes });
   state = res.state; try { save(state); } catch (e) { toast('Could not save.'); }
   const streak = computeStreak(trainingDates(state), todayStr()).current;
-  s.summary = { minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })), totals: sessionTotals(sets) };
+  let sweat = 0;   // what this session (and its level-up and PB events) paid into the Tower
+  try {
+    syncRewards(state); const g = ensureGame(state), last = state.sessions[state.sessions.length - 1];
+    sweat = (g.paid['s:' + (last && last.id)] || 0) + (res.events || []).reduce((n, e) => n + (g.paid['e:' + e.id] || 0), 0);
+    save(state);
+  } catch (e) { sweat = 0; }
+  s.summary = { sweat, minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })), totals: sessionTotals(sets) };
   s.phase = 'summary'; renderSession();
 }
 async function endEarly() {
@@ -618,12 +631,13 @@ async function doImport(file) {
 /* ---------- actions ---------- */
 const act = {
   tab: (el) => { tab = el.dataset.tab; sheet = null; render(); window.scrollTo(0, 0); },
-  settings: () => { sheet = { type: 'settings' }; renderSheet(); },
-  quick: () => { sheet = { type: 'quick' }; renderSheet(); },
-  closeSheet: () => { sheet = null; renderSheet(); },
+  settings: () => { unmountTower(); sheet = { type: 'settings' }; renderSheet(); },
+  quick: () => { unmountTower(); sheet = { type: 'quick' }; renderSheet(); },
+  closeSheet: () => { sheet = null; renderSheet(); if (tab === 'tower' && !sess) mountTower(state, save); },
   startSession: () => openSession(false),
   startMin: () => openSession(true),
   closeSess: () => closeSession(),
+  toTower: () => { tab = 'tower'; sheet = null; closeSession(); window.scrollTo(0, 0); },
   growYes: () => commit(acceptGrowth(state)),
   growNo: () => commit(dismissGrowth(state, new Date())),
   gotBar: () => commit(setPullupBar(state, true)),
@@ -683,6 +697,13 @@ const act = {
   endEarly: () => endEarly(),
   repRange: (el) => { repRange = el.dataset.range; render(); },
   repRow: (el) => { const id = el.dataset.move; if (repOpen.has(id)) repOpen.delete(id); else repOpen.add(id); render(); },
+  buyStat: (el) => { if (buyStat(ensureGame(state), el.dataset.stat)) { save(state); refreshTowerUi(state); } },
+  buyFocus: (el) => { if (buyFocus(ensureGame(state), el.dataset.up)) { save(state); refreshTowerUi(state); } },
+  ascend: async () => {
+    const g = ensureGame(state); if (!canAscend(g)) return;
+    if (!(await ask({ title: 'Ascend now?', message: 'Your floor resets to 1. You keep your best gear item, stats, Focus upgrades and currencies, and gain souls.', confirmLabel: 'Ascend' }))) return;
+    const n = ascend(g); save(state); render(); toast(`Ascended. +${n} souls.`);
+  },
   form: (el) => openForm(el.dataset.move, Number(el.dataset.level), el)
 };
 // 3D form guide: three.js and the viewer load only when it is first opened. The EMOM timer is independent of it.
