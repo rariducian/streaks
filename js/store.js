@@ -1,6 +1,6 @@
 // localStorage persistence. Every access is wrapped in try/catch.
 import { MOVES } from './data.js';
-import { defaultState } from './logic.js';
+import { defaultState, migrate } from './logic.js';
 
 export const STORAGE_KEY = 'streaks.v1';
 
@@ -11,7 +11,7 @@ export function normalise(raw) {
   const s = {
     ...base,
     ...r,
-    version: 1,
+    version: 2,
     settings: { ...base.settings, ...(r.settings && typeof r.settings === 'object' ? r.settings : {}) },
     rotationIndex: Number.isInteger(r.rotationIndex) ? r.rotationIndex : 0,
     moves: {},
@@ -31,7 +31,7 @@ export function normalise(raw) {
 export function load() {
   try {
     const text = globalThis.localStorage?.getItem(STORAGE_KEY);
-    if (text) return normalise(JSON.parse(text));
+    if (text) return normalise(migrate(JSON.parse(text)));
   } catch (e) { /* fall through to defaults */ }
   return defaultState();
 }
@@ -58,12 +58,12 @@ export function importJSON(text) {
     throw new Error('That file is not valid JSON.');
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('That file is not a streaks backup.');
-  if (data.version !== 1) throw new Error(`Unsupported backup version: ${data.version ?? 'missing'}.`);
+  if (data.version !== 1 && data.version !== 2) throw new Error(`Unsupported backup version: ${data.version ?? 'missing'}.`);
   for (const k of ['sessions', 'fasts', 'events']) {
     if (k in data && !Array.isArray(data[k])) throw new Error(`Backup is damaged: "${k}" should be a list.`);
   }
   for (const k of ['settings', 'moves']) {
     if (k in data && (typeof data[k] !== 'object' || data[k] === null || Array.isArray(data[k]))) throw new Error(`Backup is damaged: "${k}" is missing or wrong.`);
   }
-  return normalise(data);
+  return normalise(migrate(data));
 }

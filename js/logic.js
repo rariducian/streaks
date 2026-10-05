@@ -1,5 +1,5 @@
 // Pure logic for streaks. No DOM. Never mutates input.
-import { DAYS, MOVES, FAST_STAGES, SESSION_MINUTES_STEPS, MINIMUM_MINUTES } from './data.js';
+import { DAYS, MOVES, FAST_STAGES, SESSION_MINUTES_STEPS, MINIMUM_MINUTES, DEFAULT_WORK_SEC } from './data.js';
 
 const clone = (x) => structuredClone(x);
 const HOUR = 3600000;
@@ -31,15 +31,25 @@ const usableLevelIdx = (moveId, bar) =>
 const nextUsable = (moveId, level, bar) => usableLevelIdx(moveId, bar).find((i) => i > level);
 const prevUsable = (moveId, level, bar) => usableLevelIdx(moveId, bar).filter((i) => i < level).pop();
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-const defaultMove = (id) => ({ level: 0, target: MOVES[id].range[0], calibrated: false, missStreak: 0 });
+// Range [min,max] for a level: the level's own range, else the move's. For sec moves the max is capped at the work time.
+// Pass workSec to apply the cap; without it the plain range is returned.
+export function rangeOf(moveId, level, workSec = null) {
+  const m = MOVES[moveId];
+  const lv = m.levels[level];
+  let [lo, hi] = (lv && lv.range) || m.range;
+  if (m.unit === 'sec' && workSec) { hi = Math.min(hi, workSec); lo = Math.min(lo, hi); }
+  return [lo, hi];
+}
+const workOf = (state) => state.settings.workSec || DEFAULT_WORK_SEC;
+const defaultMove = (id) => ({ level: 0, target: rangeOf(id, 0)[0], calibrated: false, missStreak: 0 });
 const makeId = (now = new Date()) => now.getTime().toString(36) + Math.random().toString(36).slice(2, 6);
 
 // ---------- state ----------
 export function defaultState(now = new Date()) {
   return {
-    version: 1,
+    version: 2,
     settings: {
-      fastMinHours: 12, fastGoalHours: 16, sessionMinutes: 10, soundOn: true,
+      fastMinHours: 12, fastGoalHours: 16, sessionMinutes: 10, workSec: DEFAULT_WORK_SEC, soundOn: true,
       pullupBar: false, growthDismissedAt: null, lastBackupAt: null, createdAt: now.toISOString(),
     },
     rotationIndex: 0,
@@ -64,27 +74,49 @@ function effectiveLevel(state, moveId) {
 
 export function sessionPlan(state, { minimum = false } = {}) {
   const day = currentDay(state);
-  const minutes = minimum ? MINIMUM_MINUTES : state.settings.sessionMinutes;
-  const count = minimum ? 2 : minutes >= 20 ? 4 : minutes >= 15 ? 3 : 2;
+  const wanted = minimum ? MINIMUM_MINUTES : state.settings.sessionMinutes;
+  const count = minimum ? 2 : wanted >= 20 ? 5 : wanted >= 15 ? 4 : 3;
   const ids = day.moves.slice(0, count);
+  const work = workOf(state);
   const moves = ids.map((moveId) => {
     const m = MOVES[moveId];
     const ms = state.moves[moveId] || defaultMove(moveId);
     const level = effectiveLevel(state, moveId);
+    const lv = m.levels[level];
+    const range = rangeOf(moveId, level, work);
     return {
-      moveId, name: m.name, unit: m.unit, perSide: m.perSide, level,
-      levelName: m.levels[level].name, cue: m.levels[level].cue,
-      target: ms.target, range: [...m.range],
+      moveId, name: m.name, unit: m.unit, perSide: !!lv.perSide, rir2: !!lv.rir2, level,
+      levelName: lv.name, cue: lv.cue,
+      target: clamp(ms.target, range[0], range[1]), range,
       needsCalibration: !minimum && !ms.calibrated,
     };
   });
+  // Round-robin blocks: 1 slot (both sides together) or 2 slots (left, then right).
+  // A block that does not fit uses the next move whose block fits. If none fits, the plan stops early.
   const slots = [];
-  for (let i = 0; i < minutes; i++) slots.push({ minute: i + 1, moveId: ids[i % ids.length] });
-  return { dayId: day.id, dayName: day.name, minutes, moves, slots };
+  let next = 0;
+  while (slots.length < wanted) {
+    const room = wanted - slots.length;
+    let pick = -1;
+    for (let k = 0; k < moves.length; k++) {
+      const j = (next + k) % moves.length;
+      if ((moves[j].perSide ? 2 : 1) <= room) { pick = j; break; }
+    }
+    if (pick < 0) break;
+    const mv = moves[pick];
+    if (mv.perSide) {
+      slots.push({ minute: slots.length + 1, moveId: mv.moveId, side: 'L' });
+      slots.push({ minute: slots.length + 1, moveId: mv.moveId, side: 'R' });
+    } else {
+      slots.push({ minute: slots.length + 1, moveId: mv.moveId, side: null });
+    }
+    next = (pick + 1) % moves.length;
+  }
+  return { dayId: day.id, dayName: day.name, minutes: slots.length, workSec: work, moves, slots };
 }
 
 export function placeFromCalibration(state, moveId, level, maxReps) {
-  const [min, max] = MOVES[moveId].range;
+  const [min, max] = rangeOf(moveId, level, workOf(state));
   const bar = state.settings.pullupBar;
   const raw = Math.round(maxReps * 0.65);
   let tooEasy = false, tooHard = false;
@@ -100,7 +132,7 @@ export function applyCalibration(state, moveId, level, target) {
 }
 
 // ---------- sessions ----------
-export function finishSession(state, { startedAt, endedAt, minimum = false, sets = [] }) {
+export function finishSession(state, { startedAt, endedAt, minimum = false, sets = [], minutes = null }) {
   const s = clone(state);
   const events = [];
   const day = currentDay(s);
@@ -111,7 +143,8 @@ export function finishSession(state, { startedAt, endedAt, minimum = false, sets
     startedAt: toDate(startedAt).toISOString(),
     endedAt: toDate(endedAt || startedAt).toISOString(),
     dayId: day.id,
-    minutes: minimum ? MINIMUM_MINUTES : s.settings.sessionMinutes,
+    minutes: minimum ? MINIMUM_MINUTES : (minutes ?? s.settings.sessionMinutes),
+    workSec: workOf(s),
     minimum: !!minimum,
     sets: clone(sets),
   };
@@ -121,51 +154,59 @@ export function finishSession(state, { startedAt, endedAt, minimum = false, sets
 
   if (!minimum) {
     const bar = s.settings.pullupBar;
+    const work = workOf(s);
     const ids = [...new Set(sets.map((x) => x.moveId))].filter((id) => MOVES[id]);
     for (const moveId of ids) {
       const mv = s.moves[moveId] || (s.moves[moveId] = defaultMove(moveId));
-      const [min, max] = MOVES[moveId].range;
-      const mine = sets.filter((x) => x.moveId === moveId);
+      const cur = effectiveLevel(s, moveId);
+      // Only sets at the move's current level count (a set with level null is retired history and never counts).
+      const mine = sets.filter((x) => x.moveId === moveId && x.level === cur);
+      if (!mine.length) continue;
+      const [min, max] = rangeOf(moveId, cur, work);
+      const step = MOVES[moveId].unit === 'sec' ? 5 : 1;
       const reps = mine.map((x) => x.reps);
       const mean = reps.reduce((a, b) => a + b, 0) / reps.length;
+      const lowest = Math.min(...reps);
 
       // PB: best single set at this move+level vs earlier sessions (needs a prior best).
-      const lvl = mine[0].level ?? mv.level;
       let prevBest = 0;
-      for (const ps of prior) for (const x of ps.sets) if (x.moveId === moveId && x.level === lvl) prevBest = Math.max(prevBest, x.reps);
-      const best = Math.max(...mine.filter((x) => x.level === lvl).map((x) => x.reps));
+      for (const ps of prior) for (const x of ps.sets) if (x.moveId === moveId && x.level === cur) prevBest = Math.max(prevBest, x.reps);
+      const best = Math.max(...reps);
       const pushEv = (type, level, value) => {
         const ev = { id: makeId(new Date(at)) + events.length, at, type, moveId, level, value };
         events.push(ev); s.events.push(ev);
       };
 
-      if (reps.every((r) => r >= mv.target)) {
-        const nt = mv.target + 1;
-        if (nt > max) {
-          const nl = nextUsable(moveId, mv.level, bar);
-          if (nl !== undefined) {
-            mv.level = nl; mv.target = min; mv.missStreak = 0;
-            pushEv('levelUp', nl, nl);
-          } else {
-            mv.target = max; mv.missStreak = 0;
-          }
+      mv.level = cur;
+      if (reps.every((r) => r >= max)) {
+        const nl = nextUsable(moveId, cur, bar);
+        if (nl !== undefined) {
+          mv.level = nl; mv.target = rangeOf(moveId, nl, work)[0]; mv.missStreak = 0;
+          pushEv('levelUp', nl, nl);
         } else {
-          mv.target = nt; mv.missStreak = 0;
-          pushEv('targetUp', mv.level, nt);
-        }
-      } else if (mean < min) {
-        mv.missStreak += 1;
-        if (mv.missStreak >= 2) {
-          const pl = prevUsable(moveId, mv.level, bar);
-          if (pl !== undefined) mv.level = pl;
-          mv.target = Math.round((min + max) / 2);
-          mv.missStreak = 0;
-          pushEv('levelDown', mv.level, mv.level);
+          mv.target = max; mv.missStreak = 0;
         }
       } else {
-        mv.missStreak = 0;
+        const nt = clamp(lowest + step, min, max);
+        if (nt > mv.target) {
+          mv.target = nt;
+          pushEv('targetUp', cur, nt);
+        }
+        if (mean < min) {
+          mv.missStreak += 1;
+          if (mv.missStreak >= 2) {
+            const pl = prevUsable(moveId, cur, bar);
+            if (pl !== undefined) mv.level = pl;
+            const [lo, hi] = rangeOf(moveId, mv.level, work);
+            mv.target = Math.round((lo + hi) / 2);
+            mv.missStreak = 0;
+            pushEv('levelDown', mv.level, mv.level);
+          }
+        } else {
+          mv.missStreak = 0;
+        }
       }
-      if (prevBest > 0 && best > prevBest) pushEv('pb', lvl, best);
+      if (prevBest > 0 && best > prevBest) pushEv('pb', cur, best);
     }
   }
   return { state: s, events };
@@ -330,12 +371,13 @@ export function moveProgress(state) {
     const usable = usableLevelIdx(m.id, state.settings.pullupBar);
     const level = effectiveLevel(state, m.id);
     const idx = Math.max(0, usable.indexOf(level));
-    const frac = clamp((ms.target - m.range[0]) / (m.range[1] - m.range[0]), 0, 1);
+    const range = rangeOf(m.id, level, workOf(state));
+    const frac = range[1] > range[0] ? clamp((ms.target - range[0]) / (range[1] - range[0]), 0, 1) : 1;
     let best = 0;
     for (const se of state.sessions) for (const x of se.sets) if (x.moveId === m.id && x.level === level) best = Math.max(best, x.reps);
     return {
       moveId: m.id, name: m.name, unit: m.unit, level, levelName: m.levels[level].name,
-      levelsTotal: usable.length, target: ms.target, range: [...m.range],
+      levelsTotal: usable.length, target: clamp(ms.target, range[0], range[1]), range,
       pct: Math.round(clamp(((idx + frac) / usable.length) * 100, 0, 100)), best,
     };
   });
@@ -378,10 +420,9 @@ export function dismissGrowth(state, now) {
 // ---------- pull-up bar ----------
 export function barUnlockDue(state) {
   if (state.settings.pullupBar) return false;
-  const m = MOVES.row;
   const ms = state.moves.row || defaultMove('row');
   const usable = usableLevelIdx('row', false);
-  return ms.level === usable[usable.length - 1] && ms.target >= m.range[1];
+  return ms.level === usable[usable.length - 1] && ms.target >= rangeOf('row', ms.level)[1];
 }
 
 export function setPullupBar(state, on) {
@@ -393,10 +434,10 @@ export function setPullupBar(state, on) {
     const ms = s.moves[m.id];
     if (on && due && m.id === 'row') {
       ms.level = nextUsable('row', ms.level, true);
-      ms.target = m.range[0]; ms.missStreak = 0;
+      ms.target = rangeOf('row', ms.level)[0]; ms.missStreak = 0;
     } else if (!on && m.levels[ms.level].requiresBar) {
       ms.level = prevUsable(m.id, ms.level, false) ?? 0;
-      ms.target = m.range[1]; ms.missStreak = 0;
+      ms.target = rangeOf(m.id, ms.level)[1]; ms.missStreak = 0;
     }
   }
   return s;
@@ -413,5 +454,70 @@ export function backupDue(state, now) {
 export function markBackedUp(state, now) {
   const s = clone(state);
   s.settings.lastBackupAt = toDate(now).toISOString();
+  return s;
+}
+
+// ---------- migration (state.version 1 -> 2) ----------
+// v2 replaces the hinge and row ladders. Old level -> new level. Levels marked removed have no new equivalent.
+const LEGACY = {
+  hinge: {
+    map: { 0: 0, 1: 0, 2: 1, 3: 3 },
+    names: ['Two-hand KB swing', 'One-arm KB swing (alternate sets)', 'Single-leg RDL with KB', 'Tempo single-leg RDL (3s down)'],
+    removed: (old) => old <= 1,
+  },
+  row: {
+    map: { 0: 1, 1: 1, 2: 1, 3: 1, 4: 5, 5: 6, 6: 7 },
+    names: ['One-arm KB row', 'Tempo KB row (3s down)', 'Paused KB row (2s at top)', '1.5-rep KB row', 'Negative pull-up (5s down)', 'Chin-up', 'Pull-up'],
+    removed: (old) => old <= 3,
+  },
+};
+const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
+
+// New level for an old level index, or null if the exercise was removed.
+function newLevel(moveId, old) {
+  const lg = LEGACY[moveId];
+  if (!lg || !Number.isInteger(old)) return old;
+  return lg.removed(old) ? null : (lg.map[old] ?? old);
+}
+function remapRecord(rec, moveId, withValue) {
+  const lg = LEGACY[moveId];
+  if (!isObj(rec) || !lg || !Number.isInteger(rec.level)) return;
+  const old = rec.level;
+  const nl = newLevel(moveId, old);
+  if (nl === null) rec.legacy = lg.names[old] ?? `Level ${old + 1}`;
+  rec.level = nl;
+  if (withValue && Number.isInteger(rec.value)) rec.value = newLevel(moveId, rec.value);
+}
+
+// Pure and idempotent: a state at version 2 or higher is returned unchanged (as a copy).
+export function migrate(state) {
+  if (!isObj(state)) return state;
+  if ((state.version ?? 1) >= 2) return clone(state);
+  const s = clone(state);
+  s.version = 2;
+  s.settings = isObj(s.settings) ? s.settings : {};
+  if (s.settings.workSec == null) s.settings.workSec = DEFAULT_WORK_SEC;
+  s.moves = isObj(s.moves) ? s.moves : {};
+  for (const [id, lg] of Object.entries(LEGACY)) {
+    const mv = s.moves[id];
+    if (!isObj(mv)) continue;
+    const old = Number.isInteger(mv.level) ? mv.level : 0;
+    mv.level = newLevel(id, old) ?? (lg.map[old] ?? 0);
+    if (lg.removed(old)) { mv.calibrated = false; mv.missStreak = 0; }
+  }
+  for (const id of ['hamcurl', 'calf']) if (!isObj(s.moves[id])) s.moves[id] = defaultMove(id);
+  for (const id of Object.keys(MOVES)) {
+    const mv = s.moves[id];
+    if (!isObj(mv)) continue;
+    mv.level = clamp(Number.isInteger(mv.level) ? mv.level : 0, 0, MOVES[id].levels.length - 1);
+    const [lo, hi] = rangeOf(id, mv.level, s.settings.workSec);
+    mv.target = clamp(Number.isFinite(mv.target) ? mv.target : lo, lo, hi);
+  }
+  for (const se of Array.isArray(s.sessions) ? s.sessions : []) {
+    for (const x of Array.isArray(se && se.sets) ? se.sets : []) if (isObj(x)) remapRecord(x, x.moveId, false);
+  }
+  for (const e of Array.isArray(s.events) ? s.events : []) {
+    if (isObj(e)) remapRecord(e, e.moveId, e.type === 'levelUp' || e.type === 'levelDown');
+  }
   return s;
 }

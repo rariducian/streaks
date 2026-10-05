@@ -40,7 +40,9 @@ const BAR_SETUP = (grip) => [
   'Hang with your arms straight, your knees bent behind you and your feet off the floor. Pull your shoulder blades down and back a little so your shoulders are not shrugged.',
 ];
 
-export default {
+// Poses were authored for the v1 ladder. OLD is keyed by the v1 level index.
+// The export re-keys them to the v2 ladder; levels with no v2 equivalent are left out.
+const OLD = {
   0: mk(0, {
     checks: { neutralSpine: 5, maxTorsoLeanDeg: 60, kneesOverToes: true },
     tempo: { point: 'palm_R', axis: 1, lower: 2, press: 1 },
@@ -156,3 +158,5 @@ export default {
     sources: SRC_BAR,
   }),
 };
+
+export default { 5: OLD[4], 6: OLD[5], 7: OLD[6] };

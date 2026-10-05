@@ -1,9 +1,10 @@
-import { DAYS, MOVES, FAST_PRESETS, FAST_STAGES } from './data.js';
+import { DAYS, MOVES, FAST_PRESETS, FAST_STAGES, WORK_SEC_CHOICES, DEFAULT_WORK_SEC } from './data.js';
+import { isGuidePending } from './form/pending.js';
 import {
   todayStr, addDays, defaultState, sessionPlan, placeFromCalibration, applyCalibration, finishSession,
   trainingDates, fastingDates, computeStreak, heatmap, runningFast, startFast, endFast, editFast,
   deleteFast, fastStage, fastStats, weeklyVolume, moveProgress, recentEvents, growthOffer,
-  acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp
+  acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf
 } from './logic.js';
 import { load, save, exportJSON, importJSON } from './store.js';
 
@@ -26,8 +27,13 @@ const weekDates = () => {
 const asList = (x) => Array.isArray(x) ? x : Object.values(x || {});
 const getMove = (id) => Array.isArray(MOVES) ? MOVES.find((m) => m.id === id) : (MOVES && MOVES[id]);
 const moveName = (id) => (getMove(id) || {}).name || id;
-const levelOf = (id, lv) => ((getMove(id) || {}).levels || [])[lv] || { name: `Level ${lv + 1}`, cue: '' };
-const dayShort = { push: 'Push', legs: 'Legs', pull: 'Pull' };
+const levelOf = (id, lv) => ((getMove(id) || {}).levels || [])[lv] || { name: Number.isInteger(lv) ? `Level ${lv + 1}` : 'Retired exercise', cue: '' };
+// A stored set or event can have level null (an exercise that left the ladder). It carries the old name in `legacy`.
+const levelName = (rec) => (rec.level == null ? (rec.legacy || 'Retired exercise') : levelOf(rec.moveId, rec.level).name);
+const dayShort = { upper: 'Upper', legs: 'Legs', full: 'Full', push: 'Push', pull: 'Pull' };
+const workSecOf = () => state.settings.workSec || DEFAULT_WORK_SEC;
+const rng = (id, lv) => rangeOf(id, lv, workSecOf());
+const sideWord = (side) => (side === 'L' ? 'Left side' : side === 'R' ? 'Right side' : '');
 const presets = () => asList(FAST_PRESETS).map((p) => ({ label: p.label ?? p.name ?? p.id, hours: p.hours ?? p.goalHours ?? null }));
 const withSettings = (st, patch) => { const n = structuredClone(st); Object.assign(n.settings, patch); return n; };
 
@@ -45,7 +51,7 @@ const I = {
   info: '<svg aria-hidden="true" class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/></svg>'
 };
 // "Form" capsule: opens the 3D form guide for a move level. It never touches the session timer.
-const formChip = (moveId, level, levelName) => `<button class="formchip" data-act="form" data-move="${esc(moveId)}" data-level="${level}" aria-label="Form guide: ${esc(levelName)}">${I.info}<span>Form</span></button>`;
+const formChip = (moveId, level, levelName) => isGuidePending(moveId, level) ? '' : `<button class="formchip" data-act="form" data-move="${esc(moveId)}" data-level="${level}" aria-label="Form guide: ${esc(levelName)}">${I.info}<span>Form</span></button>`;
 
 /* ---------- app state ---------- */
 let state = load();
@@ -139,8 +145,7 @@ function viewToday() {
   const fHrs = run ? (now - new Date(run.start)) / 3.6e6 : 0;
   const fsPct = fs.doneToday ? 1 : run ? Math.min(1, fHrs / minH) : 0;
   const fsMeta = fs.doneToday ? 'Counted today' : run ? `${fmtH(fHrs)} of ${minH}h` : 'No fast yet today';
-  const lines = plan.moves.map((m) => `<div class="line">${I.bolt}<span>${esc(m.levelName)} &middot; ${m.needsCalibration ? 'test set first' : m.target + (m.unit === 'sec' ? ' sec' : ' reps')}</span></div>`).join('');
-  const each = Math.round(plan.minutes / plan.moves.length);
+  const lines = plan.moves.map((m) => `<div class="line">${I.bolt}<span>${esc(m.levelName)} &middot; ${m.needsCalibration ? 'test set first' : m.target + (m.unit === 'sec' ? ' sec' : ' reps') + (m.perSide ? ' each side' : '')}</span></div>`).join('');
   const done = tr.doneToday;
   const buttons = done
     ? `<div class="donebar">Done today &#10003;</div><div class="sub-actions"><button class="link" data-act="startSession">Train again</button><button class="link" data-act="startMin">Minimum day (3 min)</button></div>`
@@ -148,7 +153,7 @@ function viewToday() {
   let html = `<div class="section"><h2 class="title">Today's session</h2>
    <div class="hero"><div class="rowcard"><div class="poster ${esc(plan.dayId)}">${esc((dayShort[plan.dayId] || plan.dayName).toUpperCase())}<span class="spill o">Up next</span></div>
     <div class="rowbody"><div class="meta">Next in rotation</div><div class="rtitle">${esc(plan.dayName)} &middot; EMOM ${plan.minutes}</div>
-    <div class="line">${I.clock}<span>${plan.minutes} min &middot; ${each} sets each</span></div>${lines}</div></div>${buttons}</div></div>
+    <div class="line">${I.clock}<span>${plan.minutes} min &middot; ${plan.workSec} s work, ${60 - plan.workSec} s rest</span></div>${lines}</div></div>${buttons}</div></div>
   <div class="section"><div class="rings">${streakCard({ label: 'Training', st: tr, dates: trDates, pct: done ? 1 : 0, color: 'var(--green)', meta: done ? 'Done today' : 'Not trained yet', now })}${streakCard({ label: 'Fasting', st: fs, dates: fsDates, pct: fsPct, color: 'var(--purple)', meta: fsMeta, now, attr: 'data-fring' })}</div></div>`;
   if (!run) html += `<div class="section"><h2 class="title"><button class="titlebtn" data-act="tab" data-tab="fast">Fast <span class="chev" aria-hidden="true">&rsaquo;</span></button></h2>
    <button class="fastchip" data-act="tab" data-tab="fast"><div class="poster fast">FAST</div><div><div class="t">Start a fast</div><div class="small muted">Goal ${state.settings.fastGoalHours}h</div></div></button></div>`;
@@ -265,7 +270,7 @@ function volumeChart(v) {
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Sets per week over the last ${v.length} weeks, oldest first: ${v.map((x) => x.sets).join(', ')}."><defs><linearGradient id="vg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF9A3C"/><stop offset="1" stop-color="#EF4036"/></linearGradient></defs>${grid}${bars}</svg>`;
 }
 function evLabel(e) {
-  const n = moveName(e.moveId), lv = levelOf(e.moveId, e.level).name;
+  const n = moveName(e.moveId), lv = levelName(e);
   switch (e.type) {
     case 'levelUp': return ['up', '&#9650;', `Level up: ${esc(lv)}`];
     case 'levelDown': return ['dn', '&#9660;', `Eased back to ${esc(lv)}`];
@@ -274,6 +279,8 @@ function evLabel(e) {
     default: return ['tg', '&bull;', esc(e.type)];
   }
 }
+// Level card attributes. Cards for levels with no 3D guide yet are plain (not tappable).
+const lvlAttrs = (m) => isGuidePending(m.moveId, m.level) ? '"' : ` tappable" role="button" tabindex="0" data-act="form" data-move="${esc(m.moveId)}" data-level="${m.level}" aria-label="Form guide: ${esc(m.name)}, ${esc(m.levelName)}"`;
 function viewProgress() {
   const mp = moveProgress(state), today = todayStr();
   const tdates = trainingDates(state), fdates = fastingDates(state);
@@ -287,7 +294,7 @@ function viewProgress() {
     : `${plural(cur, 'set')} this week, ${diff === 0 ? 'the same as last week' : `${Math.abs(diff)} ${diff > 0 ? 'more' : 'fewer'} than last week`}.`;
   const trN = daysIn(tdates, 7, today), fsN = daysIn(fdates, 7, today);
   return `<div class="section"><h2 class="title">Levels</h2>
-    ${mp.map((m) => `<div class="lvl tappable" role="button" tabindex="0" data-act="form" data-move="${esc(m.moveId)}" data-level="${m.level}" aria-label="Form guide: ${esc(m.name)}, ${esc(m.levelName)}"><div class="top"><span class="nm">${esc(m.name)}</span><span class="tg">Target ${m.target}/${m.range[1]}${m.unit === 'sec' ? 's' : ''}</span></div>
+    ${mp.map((m) => `<div class="lvl${lvlAttrs(m)}><div class="top"><span class="nm">${esc(m.name)}</span><span class="tg">Target ${m.target}/${m.range[1]}${m.unit === 'sec' ? 's' : ''}</span></div>
     <div class="ln">Level ${m.level + 1} of ${m.levelsTotal} &middot; ${esc(m.levelName)}${m.best ? ` &middot; best ${m.best}` : ''}</div><div class="bar"><i style="width:${Math.max(3, Math.min(100, m.pct))}%"></i></div></div>`).join('')}</div>
   <div class="section"><h2 class="title">Weekly volume</h2><p class="chartsum">${vsum}</p><div class="chart">${volumeChart(vol)}</div></div>
   <div class="section"><h2 class="title">Highlights</h2><div class="feed">${ev.map((e) => { const [c, ic, t] = evLabel(e); return `<div class="ev"><div class="bd ${c}">${ic}</div><div><div>${t}</div><div class="when">${esc(dmy(new Date(e.at)))}</div></div></div>`; }).join('') || '<div class="empty">Your level-ups and personal bests will show here.</div>'}</div></div>
@@ -309,6 +316,7 @@ function sheetHtml() {
     body = `<div class="field"><label>Session length</label><span class="muted">${s.sessionMinutes} min</span></div>
       <div class="field"><label for="sfmin">Fast counts after</label><select id="sfmin" data-change="fastMin">${hoursOpts(s.fastMinHours, [8, 10, 12, 13, 14, 16])}</select></div>
       <div class="field"><label for="sfgoal">Default fast goal</label><select id="sfgoal" data-change="fastGoal">${hoursOpts(s.fastGoalHours, [...new Set([12, 13, 14, 16, 18, 20, 24, s.fastGoalHours])].sort((a, b) => a - b))}</select></div>
+      <div class="field"><label for="swork">Work time each minute</label><select id="swork" data-change="workSec">${WORK_SEC_CHOICES.map((w) => `<option value="${w}" ${w === workSecOf() ? 'selected' : ''}>${w} s work &middot; ${60 - w} s rest</option>`).join('')}</select></div>
       <div class="field"><label>Sound</label>${toggle(s.soundOn, 'toggleSound')}</div>
       <div class="field"><label>I have a pull-up bar</label>${toggle(s.pullupBar, 'toggleBar')}</div>
       <div class="field"><label>Last backup</label><span class="muted">${s.lastBackupAt ? esc(dmy(new Date(s.lastBackupAt))) : 'Never'}</span></div>
@@ -369,7 +377,8 @@ function beep(freq = 660, dur = 0.12, vol = 0.5) {
     o.start(t); o.stop(t + dur + 0.02);
   } catch (e) { /* ignore */ }
 }
-const BEEP = { start: [988, 0.25], minute: [988, 0.3], tick: [440, 0.08], end: [784, 0.6] };
+// start/minute: a slot begins. tick: 3-2-1. rest: work ends. end: session over.
+const BEEP = { start: [988, 0.25], minute: [988, 0.3], tick: [440, 0.08], rest: [523, 0.4], end: [784, 0.6] };
 async function lockScreen() {
   try {
     if (!('wakeLock' in navigator)) throw new Error('none');
@@ -390,8 +399,8 @@ function openSession(minimum) {
 }
 function initCalib(level) {
   const id = sess.queue[sess.ci], pm = sess.plan.moves.find((m) => m.moveId === id);
-  const lv = level ?? pm.level;
-  sess.calib = { id, pm, level: lv, max: Math.round((pm.range[0] + pm.range[1]) / 2), result: null };
+  const lv = level ?? pm.level, r = rng(id, lv);
+  sess.calib = { id, pm, level: lv, range: r, max: Math.round((r[0] + r[1]) / 2), result: null };
 }
 function closeSession() {
   clearInterval(ticker); ticker = null; unlockScreen(); sess = null;
@@ -401,9 +410,19 @@ const unitWord = (m) => m.unit === 'sec' ? 'seconds' : 'reps';
 function stepperHtml(id, val, small) { return `<div class="stepper ${small ? 'sm' : ''}"><button data-act="step" data-w="${id}" data-d="-1" aria-label="Less">&minus;</button><input type="text" inputmode="numeric" pattern="[0-9]*" id="out-${id}" value="${val}" data-change="stepSet" data-w="${id}" aria-label="Value"><button data-act="step" data-w="${id}" data-d="1" aria-label="More">+</button></div>`; }
 function nextUp(idx) {
   const p = sess.plan, n = p.slots[idx + 1];
-  if (!n) return 'Last minute. Finish strong.';
+  if (!n) return 'Last set. Finish strong.';
   const m = p.moves.find((x) => x.moveId === n.moveId);
-  return `Next: ${esc(m.name)} &middot; ${esc(m.levelName)} &middot; target ${m.target}${m.unit === 'sec' ? ' sec' : ''}`;
+  return `Next: ${esc(m.name)} &middot; ${esc(m.levelName)}${n.side ? ' &middot; ' + sideWord(n.side) : ''} &middot; target ${m.target}${m.unit === 'sec' ? ' sec' : ''}`;
+}
+// Value for a slot's log: the last value logged for the same move and side this session, else the target.
+function fillLog(i) {
+  const s = sess, sl = s.plan.slots[i];
+  if (!sl || s.logs[i] !== null) return;
+  for (let j = i - 1; j >= 0; j--) {
+    const o = s.plan.slots[j];
+    if (o.moveId === sl.moveId && o.side === sl.side && s.logs[j] !== null) { s.logs[i] = s.logs[j]; return; }
+  }
+  s.logs[i] = s.plan.moves.find((m) => m.moveId === sl.moveId).target;
 }
 function renderSession() {
   const o = $('#overlay'); if (!sess) return;
@@ -415,14 +434,14 @@ function renderSession() {
     const c = s.calib, lvl = levelOf(c.id, c.level), r = c.result;
     mid = `<div class="kicker">Test set ${s.ci + 1} of ${s.queue.length}</div><div class="mname">${esc(c.pm.name)}</div><div class="lname">${esc(lvl.name)} ${formChip(c.id, c.level, lvl.name)}</div><div class="cue">${esc(lvl.cue || '')}</div>`;
     if (!r) {
-      mid += `<p class="muted" style="margin:14px 0 0">Do one max set with good form. How many ${unitWord(c.pm)} did you get?</p>${stepperHtml('calib', c.max)}`;
+      mid += `<p class="muted" style="margin:14px 0 0">Do one max set with good form${lvl.perSide ? ' on one side' : ''}. How many ${unitWord(c.pm)} did you get?</p>${stepperHtml('calib', c.max)}`;
       bot = `<button class="btn block" data-act="calibGo">Log max set</button>`;
     } else if (r.tooEasy) {
       mid += `<div class="note" style="text-align:center"><h3>That looks easy</h3><p style="margin:0">Your target would be above the top of the range for this level.</p></div>`;
-      bot = `<button class="btn block" data-act="calibNext">Test next level</button><button class="btn soft block" data-act="calibHere">Start here (${c.pm.range[1]})</button>`;
+      bot = `<button class="btn block" data-act="calibNext">Test next level</button><button class="btn soft block" data-act="calibHere">Start here (${c.range[1]})</button>`;
     } else if (r.tooHard) {
       mid += `<div class="note" style="text-align:center"><h3>That looks hard</h3><p style="margin:0">Your target would be below the bottom of the range for this level.</p></div>`;
-      bot = `<button class="btn block" data-act="calibPrev">Test easier level</button><button class="btn soft block" data-act="calibHere">Start here (${c.pm.range[0]})</button>`;
+      bot = `<button class="btn block" data-act="calibPrev">Test easier level</button><button class="btn soft block" data-act="calibHere">Start here (${c.range[0]})</button>`;
     } else {
       mid += `<div class="target" style="margin-top:14px">Your target: ${r.target} ${c.pm.unit === 'sec' ? 'sec' : 'reps'}</div>`;
       bot = `<button class="btn block" data-act="calibOk">Continue</button>`;
@@ -431,79 +450,89 @@ function renderSession() {
     mid = `<div class="kicker">${s.minimum ? 'Minimum day' : 'Ready'}</div><div class="mname">${p.minutes} minutes</div>
       <div class="lname">${p.moves.map((m) => esc(m.name)).join(' &middot; ')}</div>
       <button class="tapstart" data-act="beginRun">Tap to start</button>
-      <div class="cue">Every minute, do your target, rest the rest, then log it.</div>
+      <div class="cue">Each minute: ${p.workSec} s max effort, then ${60 - p.workSec} s rest. Log your reps in the rest.</div>
       ${s.wlOk === false ? '<div class="warn" style="align-self:center">Keep your screen on manually.</div>' : ''}`;
   } else if (s.phase === 'run') {
     const slot = p.slots[s.idx], pm = p.moves.find((m) => m.moveId === slot.moveId);
     const dots = p.slots.map((_, i) => `<i class="${i < s.idx ? 'done' : i === s.idx ? 'cur' : ''}"></i>`).join('');
     const prev = s.idx > 0 ? p.slots[s.idx - 1] : null;
-    const nx = nextUp(s.idx), logged = s.logged[s.idx];
-    const label = `<div class="kicker" id="minLabel">Minute ${s.idx + 1} of ${p.minutes}${s.pausedAt ? ' &middot; Paused' : ''}</div>`;
+    const nx = nextUp(s.idx);
+    const side = slot.side ? ` &middot; ${sideWord(slot.side)}` : '';
+    const label = `<div class="kicker" id="minLabel">Minute ${s.idx + 1} of ${p.minutes}${side}${s.pausedAt ? ' &middot; Paused' : ''}</div>`;
     const warn = s.wlOk === false ? '<div class="warn" style="align-self:center">Keep your screen on manually.</div>' : '';
-    if (!logged) {
+    if (s.ph === 'work') {
+      const effort = pm.rir2 ? 'Stop about 2 reps before failure.' : 'Max out with good form. Stop when the next rep would break form.';
+      const beat = pm.unit === 'sec' ? `Hold up to ${s.workSec} s` : `Beat ${pm.target}`;
       mid = `${label}<div class="timer" id="timer">--:--</div><div class="dots">${dots}</div>
-      <div class="mname">${esc(pm.name)}</div><div class="lname">${esc(pm.levelName)} ${formChip(pm.moveId, pm.level, pm.levelName)}</div><div class="cue">${esc(pm.cue)}${pm.perSide ? ' (each side)' : ''}</div>
-      <div class="target" style="margin-top:8px">Target ${pm.target} ${pm.unit === 'sec' ? 'sec' : 'reps'}</div>
-      <div class="kicker" style="margin-top:12px">${pm.unit === 'sec' ? 'Seconds' : 'Reps'} this minute</div>${stepperHtml('log', s.logs[s.idx])}
-      ${prev ? `<div class="prevrow"><span>Last minute</span>${stepperHtml('prev', s.logs[s.idx - 1], true)}</div>` : ''}
-      <div class="nextup" id="nextup" hidden>${nx}</div>${warn}`;
-      bot = `<button class="btn huge" data-act="logDone">Done</button><div class="two"><button class="btn soft" data-act="pause">${s.pausedAt ? 'Resume' : 'Pause'}</button><button class="btn soft" data-act="endEarly">End early</button></div>`;
+      <div class="mname">${esc(pm.name)}</div><div class="lname">${esc(pm.levelName)} ${formChip(pm.moveId, pm.level, pm.levelName)}</div><div class="cue">${esc(pm.cue)}</div>
+      <div class="cue">${effort}</div>
+      <div class="target" style="margin-top:8px">${beat}</div>
+      ${prev ? `<div class="prevrow"><span>Last set</span>${stepperHtml('prev', s.logs[s.idx - 1], true)}</div>` : ''}${warn}`;
     } else {
       mid = `${label}<div class="restlabel">Rest</div><div class="timer" id="timer">--:--</div><div class="dots">${dots}</div>
-      <div class="nextup" id="nextup">${nx}</div>
-      <div class="prevrow"><span>Logged ${s.logs[s.idx]} ${pm.unit === 'sec' ? 'sec' : 'reps'}</span>${stepperHtml('log', s.logs[s.idx], true)}</div>${warn}`;
-      bot = `<div class="two"><button class="btn soft" data-act="pause">${s.pausedAt ? 'Resume' : 'Pause'}</button><button class="btn soft" data-act="endEarly">End early</button></div>`;
+      <div class="kicker" style="margin-top:12px">${pm.unit === 'sec' ? 'Seconds held' : 'Reps this set'}</div>${stepperHtml('log', s.logs[s.idx])}
+      <div class="nextup" id="nextup">${nx}</div>${warn}`;
     }
-    o.classList.toggle('rest', !!logged);
+    bot = `<div class="two"><button class="btn soft" data-act="pause">${s.pausedAt ? 'Resume' : 'Pause'}</button><button class="btn soft" data-act="endEarly">End early</button></div>`;
+    o.classList.toggle('rest', s.ph === 'rest');
   } else if (s.phase === 'summary') {
     const sm = s.summary;
     mid = `<div class="celebrate">${sm.events.length ? '&#127881;' : '&#9989;'}</div><div class="mname">${sm.minimum ? 'Minimum day done' : 'Session done'}</div>
       <div class="lname">${sm.streak} day training streak</div>
-      <table class="sumtable"><tr><th>Min</th><th>Move</th><th>${'Logged'}</th></tr>${sm.rows.map((r) => `<tr><td>${r.i}</td><td>${esc(r.name)}<div class="small muted">${esc(r.lvl)}</div></td><td>${r.reps}${r.unit === 'sec' ? 's' : ''}</td></tr>`).join('')}</table>
+      <table class="sumtable"><tr><th>Min</th><th>Move</th><th>${'Logged'}</th></tr>${sm.rows.map((r) => `<tr><td>${r.i}</td><td>${esc(r.name)}<div class="small muted">${esc(r.lvl)}${r.side ? ' &middot; ' + sideWord(r.side) : ''}</div></td><td>${r.reps}${r.unit === 'sec' ? 's' : ''}</td></tr>`).join('')}</table>
       ${sm.events.map((e) => { const [, ic, t] = evLabel(e); return `<div class="evcard">${ic} ${t}</div>`; }).join('')}
       ${sm.minimum ? '<p class="small muted">Minimum days keep your streak. They do not change your targets.</p>' : ''}`;
     bot = `<button class="btn block" data-act="closeSess">Done</button>`;
   }
   const scroll = o.firstElementChild ? o.firstElementChild.scrollTop : 0;
   o.innerHTML = `<div class="ov">${top}<div class="ov-mid">${mid}</div><div class="ov-bot">${bot}</div></div>`;
-  if (s.phase === 'run') tickSession(true);
+  if (s.phase === 'run') tickSession();
   void scroll;
 }
 function startRun() {
   const s = sess; unlockAudio(); beep(...BEEP.start); lockScreen();
-  s.phase = 'run'; s.startMs = Date.now(); s.pausedAt = null; s.pausedTotal = 0; s.idx = 0; s.lastTick = null;
-  s.logged = s.plan.slots.map(() => false);
-  s.logs = s.plan.slots.map((sl) => s.plan.moves.find((m) => m.moveId === sl.moveId).target);
-  clearInterval(ticker); ticker = setInterval(() => tickSession(false), 150);
+  s.phase = 'run'; s.startMs = Date.now(); s.pausedAt = null; s.pausedTotal = 0; s.idx = 0; s.ph = 'work'; s.lastTick = null;
+  s.workSec = s.plan.workSec;
+  s.logs = s.plan.slots.map(() => null);   // filled when a slot reaches its rest (see fillLog)
+  clearInterval(ticker); ticker = setInterval(tickSession, 150);
   renderSession();
 }
-function tickSession(force) {
+// One slot = one minute: work for workSec, then rest for the remainder.
+function tickSession() {
   const s = sess; if (!s || s.phase !== 'run') return;
   const now = s.pausedAt ?? Date.now(), el = now - s.startMs - s.pausedTotal, total = s.plan.minutes * 60000;
+  const workMs = s.workSec * 1000;
   if (el >= total) { beep(...BEEP.end); finishRun(s.plan.minutes); return; }
-  const idx = Math.floor(el / 60000);
-  if (idx !== s.idx) { s.idx = idx; s.lastTick = null; if (!s.pausedAt) beep(...BEEP.minute); renderSession(); return; }
-  const rem = Math.ceil((60000 - el % 60000) / 1000);
+  const idx = Math.floor(el / 60000), within = el % 60000, ph = within < workMs ? 'work' : 'rest';
+  if (idx !== s.idx || ph !== s.ph) {
+    const newSlot = idx !== s.idx;
+    for (let i = 0; i < idx; i++) fillLog(i);       // slots that ended (also if the tab slept)
+    if (ph === 'rest') fillLog(idx);
+    s.idx = idx; s.ph = ph; s.lastTick = null;
+    if (!s.pausedAt) beep(...(newSlot ? BEEP.minute : BEEP.rest));
+    renderSession(); return;
+  }
+  const rem = Math.ceil(((ph === 'work' ? workMs : 60000) - within) / 1000);
   const t = $('#timer');
-  if (t) { t.textContent = `${pad(Math.floor(rem / 60))}:${pad(rem % 60)}`; t.classList.toggle('low', rem <= 3 && !s.logged[s.idx]); }
-  const nu = $('#nextup'); if (nu && !s.logged[s.idx]) nu.hidden = rem > 10;
+  if (t) { t.textContent = `${pad(Math.floor(rem / 60))}:${pad(rem % 60)}`; t.classList.toggle('low', rem <= 3); }
   if (!s.pausedAt && rem <= 3 && s.lastTick !== rem) { s.lastTick = rem; beep(...BEEP.tick); }
 }
 function finishRun(completed) {
   const s = sess; if (!s) return;
   clearInterval(ticker); ticker = null; unlockScreen();
   const p = s.plan;
-  const sets = p.slots.slice(0, completed).map((sl, i) => { const m = p.moves.find((x) => x.moveId === sl.moveId); return { moveId: sl.moveId, level: m.level, reps: s.logs[i] }; });
+  for (let i = 0; i < completed; i++) fillLog(i);
+  const sets = p.slots.slice(0, completed).map((sl, i) => { const m = p.moves.find((x) => x.moveId === sl.moveId); return { moveId: sl.moveId, level: m.level, reps: s.logs[i], ...(sl.side ? { side: sl.side } : {}) }; });
   const minimum = s.minimum || completed < p.minutes;
-  const res = finishSession(state, { startedAt: new Date(s.startMs).toISOString(), endedAt: new Date().toISOString(), minimum, sets });
+  const res = finishSession(state, { startedAt: new Date(s.startMs).toISOString(), endedAt: new Date().toISOString(), minimum, sets, minutes: p.minutes });
   state = res.state; try { save(state); } catch (e) { toast('Could not save.'); }
   const streak = computeStreak(trainingDates(state), todayStr()).current;
-  s.summary = { minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelOf(x.moveId, x.level).name, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })) };
+  s.summary = { minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })) };
   s.phase = 'summary'; renderSession();
 }
 async function endEarly() {
   const s = sess; if (!s) return;
-  const now = s.pausedAt ?? Date.now(), done = Math.min(s.idx, Math.floor((now - s.startMs - s.pausedTotal) / 60000));
+  const now = s.pausedAt ?? Date.now(), done = Math.min(s.plan.minutes, Math.floor((now - s.startMs - s.pausedTotal) / 60000));
   // Hold the clock while the sheet is open.
   const wasPaused = !!s.pausedAt; if (!wasPaused) s.pausedAt = Date.now();
   const resume = () => { if (!wasPaused && sess === s && s.pausedAt) { s.pausedTotal += Date.now() - s.pausedAt; s.pausedAt = null; } };
@@ -511,7 +540,7 @@ async function endEarly() {
     if (await ask({ title: 'Discard this session?', message: 'Under 3 minutes does not count towards your streak.', confirmLabel: 'Discard session', destructive: true })) closeSession(); else resume();
     return;
   }
-  if (await ask({ title: 'End the session now?', message: `${done} minutes will be saved as a minimum day. Targets will not change.`, confirmLabel: 'End and save' })) finishRun(done); else resume();
+  if (await ask({ title: 'End the session now?', message: `${done} sets will be saved as a minimum day. Targets will not change.`, confirmLabel: 'End and save' })) finishRun(done); else resume();
 }
 function calibApply(level, target) {
   const s = sess, c = s.calib;
@@ -602,16 +631,15 @@ const act = {
     if (w === 'calib') { const u = s.calib.pm.unit === 'sec' ? 5 : 1; s.calib.max = Math.max(0, s.calib.max + d * u); $('#out-calib').value = s.calib.max; }
     else {
       const i = w === 'log' ? s.idx : s.idx - 1, pm = s.plan.moves.find((m) => m.moveId === s.plan.slots[i].moveId), u = pm.unit === 'sec' ? 5 : 1;
-      s.logs[i] = Math.max(0, s.logs[i] + d * u); $('#out-' + w).value = s.logs[i];
+      fillLog(i); s.logs[i] = Math.max(0, s.logs[i] + d * u); $('#out-' + w).value = s.logs[i];
     }
   },
   calibGo: () => { const c = sess.calib; c.result = placeFromCalibration(state, c.id, c.level, c.max); renderSession(); },
   calibNext: () => { initCalib(sess.calib.level + 1); renderSession(); },
   calibPrev: () => { initCalib(sess.calib.level - 1); renderSession(); },
-  calibHere: () => { const c = sess.calib, r = c.result; calibApply(r.level ?? c.level, r.tooEasy ? c.pm.range[1] : c.pm.range[0]); },
+  calibHere: () => { const c = sess.calib, r = c.result; calibApply(r.level ?? c.level, r.tooEasy ? c.range[1] : c.range[0]); },
   calibOk: () => { const c = sess.calib; calibApply(c.result.level ?? c.level, c.result.target); },
   beginRun: () => startRun(),
-  logDone: () => { const s = sess; if (!s || s.phase !== 'run') return; s.logged[s.idx] = true; renderSession(); },
   pause: () => { const s = sess; if (s.pausedAt) { s.pausedTotal += Date.now() - s.pausedAt; s.pausedAt = null; unlockAudio(); lockScreen(); } else { s.pausedAt = Date.now(); } renderSession(); },
   endEarly: () => endEarly(),
   form: (el) => openForm(el.dataset.move, Number(el.dataset.level), el)
@@ -631,6 +659,7 @@ const changes = {
   },
   fastMin: (el) => commit(withSettings(state, { fastMinHours: Number(el.value) })),
   fastGoal: (el) => commit(withSettings(state, { fastGoalHours: Number(el.value) })),
+  workSec: (el) => commit(withSettings(state, { workSec: Number(el.value) })),
   fastStart: (el) => {
     const run = runningFast(state); if (!run || !el.value) return;
     try { commit(editFast(state, run.id, { start: fromLocalInput(el.value) })); } catch (e) { toast('Start must be before now.'); render(); }
@@ -650,7 +679,7 @@ document.addEventListener('change', (e) => {
 });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  if (sess && sess.phase === 'run') { if (ac && ac.state === 'suspended') ac.resume(); if (!wl && !sess.pausedAt) lockScreen(); tickSession(false); }
+  if (sess && sess.phase === 'run') { if (ac && ac.state === 'suspended') ac.resume(); if (!wl && !sess.pausedAt) lockScreen(); tickSession(); }
   updateFastLive();
 });
 

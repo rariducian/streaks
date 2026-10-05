@@ -23,7 +23,9 @@ const ROUND = { wp: 'round', mistake: 'Your lower back rounds when the bell goes
 const LEAN = { wp: 'lean', mistake: 'You lean back at the top and push your belly forward.', fix: 'Stand tall in one straight line from head to heels. Squeeze your glutes and keep your ribs down. The bell floats up only to chest height.', highlight: ['spine', 'chest', 'hip_L', 'hip_R'] };
 const HIKE = 'Stand with your feet a little wider than your shoulders and your toes turned out a little. Put the bell on the floor about one foot-length in front of you.';
 
-export default {
+// Poses were authored for the v1 ladder. OLD is keyed by the v1 level index.
+// The export re-keys them to the v2 ladder; levels with no v2 equivalent are left out.
+const OLD = {
   0: mk(0, {
     checks: { neutralSpine: 10, maxTorsoLeanDeg: 60, kneesOverToes: true },
     cues: {
@@ -112,3 +114,5 @@ export default {
     sources: SRC_RDL,
   }),
 };
+
+export default { 1: OLD[2], 3: OLD[3] };

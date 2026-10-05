@@ -1,12 +1,12 @@
 // Form-viewer trust tests: every pose must be physically sane. Do not loosen thresholds; fix the pose.
-// FORM_STRICT=1 makes missing poses fail (Phase 2 finish line). Without it they show as todo.
+// Every level must have a pose, or be listed in GUIDE_PENDING (js/form/pending.js). Nothing in GUIDE_PENDING may have a pose.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MOVES } from '../js/data.js';
 import { fk, fkFull, flexionDeg, samplePose, vsub, vlen, vmid, vangle, qrot } from '../js/form/skeleton.js';
 import { TOE_CUE } from '../js/form/cues-common.js';
+import { GUIDE_PENDING } from '../js/form/pending.js';
 
-const STRICT = process.env.FORM_STRICT === '1';
 const DRIFT_MAX = 0.02, FLOOR = -0.01;
 const MOVE_IDS = Object.keys(MOVES);
 const poses = {};
@@ -27,11 +27,20 @@ const LIMITS = { // authored rx (flexion +) per joint family, degrees
 };
 const report = [];
 
+for (const [id, idxs] of Object.entries(GUIDE_PENDING)) {
+  for (const i of idxs) {
+    test(`${id}[${i}]: is in GUIDE_PENDING so must have no pose`, () => {
+      assert.ok(MOVES[id] && MOVES[id].levels[i], 'pending entry names a real level');
+      assert.ok(!(poses[id] && poses[id][i]), 'has a pose, so remove it from GUIDE_PENDING');
+    });
+  }
+}
+
 for (const id of MOVE_IDS) {
   MOVES[id].levels.forEach((meta, i) => {
     const lv = poses[id] && poses[id][i];
     const name = `${id}[${i}] ${meta.name}`;
-    if (!lv) { test(`${name}: has a pose entry`, { todo: STRICT ? false : 'Phase 2: not authored yet' }, () => assert.ok(lv, 'missing pose entry')); return; }
+    if (!lv) { test(`${name}: has a pose entry or is in GUIDE_PENDING`, () => assert.ok((GUIDE_PENDING[id] || []).includes(i), 'no pose and not listed in GUIDE_PENDING')); return; }
 
     test(`${name}: keyframes are well formed and loop`, () => {
       assert.ok(lv.loop === true && lv.duration > 0, 'loop true and duration > 0');

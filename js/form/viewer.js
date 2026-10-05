@@ -2,6 +2,7 @@
 // three.js is imported lazily, only when a viewer is opened, from the import map in index.html.
 import { MOVES } from '../data.js';
 import { DISCLAIMER } from './cues-common.js';
+import { isGuidePending } from './pending.js';
 import { fk, fkFull, samplePose, qrot, qmul, vsub, vlen, vangle } from './skeleton.js';
 
 const FIG_LIFT = 0.02;   // figure is lifted so the mitten hands rest on the floor plane (foot soles reach 2 cm below the heel points)
@@ -135,7 +136,9 @@ function renderBody() {
   } else {
     h += `<section><p class="fv-soft">The 3D guide and full form notes for this level are coming soon.</p></section>`;
   }
-  h += `<section><h3>See every level</h3><div class="fv-levels">${move.levels.map((l, i) => `<button class="fv-lv ${i === S.level ? 'on' : ''}" data-fv="level" data-level="${i}"${i === S.level ? ' aria-current="true"' : ''}><span class="n">${i + 1}</span><span class="t">${esc(l.name)}${S.poses && S.poses[i] ? '' : ' <i>soon</i>'}</span></button>`).join('')}</div></section>`;
+  // Levels with no 3D guide yet (GUIDE_PENDING) are skipped here. The current level always shows.
+  const lvBtns = move.levels.map((l, i) => (isGuidePending(S.moveId, i) && i !== S.level ? '' : `<button class="fv-lv ${i === S.level ? 'on' : ''}" data-fv="level" data-level="${i}"${i === S.level ? ' aria-current="true"' : ''}><span class="n">${i + 1}</span><span class="t">${esc(l.name)}${S.poses && S.poses[i] ? '' : ' <i>soon</i>'}</span></button>`)).join('');
+  if (lvBtns) h += `<section><h3>See every level</h3><div class="fv-levels">${lvBtns}</div></section>`;
   if (lv) h += `<p class="fv-src">Sources: ${lv.sources.map(esc).join('; ')}</p>`;
   h += `<p class="fv-note">${esc(DISCLAIMER)}</p>`;
   S.root.querySelector('#fv-body').innerHTML = h;
