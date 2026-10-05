@@ -98,6 +98,12 @@ const MOVE_LIST = [
 export const MOVES = Object.fromEntries(MOVE_LIST.map((m) => [m.id, m]));
 export { MOVE_LIST };
 
+// Short plural names for rep totals ("46 push-ups"). Core is timed, so it is shown as time.
+export const MOVE_NOUNS = {
+  hpush: 'Push-ups', vpush: 'Overhead presses', squat: 'Squats', hinge: 'Hinges',
+  hamcurl: 'Hamstring curls', calf: 'Calf raises', row: 'Rows', core: 'Core',
+};
+
 export const DAYS = [
   { id: 'upper', name: 'Upper', moves: ['hpush', 'row', 'vpush', 'core', 'calf'] },
   { id: 'legs', name: 'Legs', moves: ['squat', 'hamcurl', 'calf', 'vpush', 'core'] },

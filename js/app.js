@@ -1,10 +1,10 @@
-import { DAYS, MOVES, FAST_PRESETS, FAST_STAGES, WORK_SEC_CHOICES, DEFAULT_WORK_SEC } from './data.js';
+import { DAYS, MOVES, MOVE_NOUNS, FAST_PRESETS, FAST_STAGES, WORK_SEC_CHOICES, DEFAULT_WORK_SEC } from './data.js';
 import { isGuidePending } from './form/pending.js';
 import {
   todayStr, addDays, defaultState, sessionPlan, placeFromCalibration, applyCalibration, finishSession,
   trainingDates, fastingDates, computeStreak, heatmap, runningFast, startFast, endFast, editFast,
   deleteFast, fastStage, fastStats, weeklyVolume, moveProgress, recentEvents, growthOffer,
-  acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf
+  acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals
 } from './logic.js';
 import { load, save, exportJSON, importJSON } from './store.js';
 
@@ -281,6 +281,29 @@ function evLabel(e) {
 }
 // Level card attributes. Cards for levels with no 3D guide yet are plain (not tappable).
 const lvlAttrs = (m) => isGuidePending(m.moveId, m.level) ? '"' : ` tappable" role="button" tabindex="0" data-act="form" data-move="${esc(m.moveId)}" data-level="${m.level}" aria-label="Form guide: ${esc(m.name)}, ${esc(m.levelName)}"`;
+// Rep totals card. Choice and open rows live in module variables so a re-render keeps them.
+let repRange = 'week';            // 'week' | 'month' | 'all'
+const repOpen = new Set();
+const REP_RANGES = [['week', 'Week'], ['month', '30 days'], ['all', 'All time']];
+const fmtN = (n) => n.toLocaleString('en-AU');
+// Reps as a plain number. Seconds as "45 s", "2:05" or "12 min".
+const fmtAmt = (n, unit) => unit !== 'sec' ? fmtN(n) : n < 60 ? `${n} s` : n < 600 ? `${Math.floor(n / 60)}:${pad(n % 60)}` : `${fmtN(Math.round(n / 60))} min`;
+const noun = (id) => MOVE_NOUNS[id] || moveName(id);
+function repCard(today) {
+  const rt = repTotals(state, today), key = repRange === 'all' ? 'allTime' : repRange;
+  const reps = rt.filter((m) => m.unit !== 'sec').reduce((a, m) => a + m.allTime, 0);
+  const sec = rt.filter((m) => m.unit === 'sec').reduce((a, m) => a + m.allTime, 0);
+  const head = !reps && !sec ? 'No reps yet' : `${fmtN(reps)} reps all time${sec ? ` + ${fmtAmt(sec, 'sec')} core` : ''}`;
+  const seg = REP_RANGES.map(([id, l]) => `<button role="radio" aria-checked="${repRange === id}" class="${repRange === id ? 'on' : ''}" data-act="repRange" data-range="${id}">${l}</button>`).join('');
+  const rows = rt.map((m) => {
+    const open = repOpen.has(m.moveId), pid = `rt-${m.moveId}`;
+    const lv = m.levels.length ? m.levels.map((l) => `<div class="rt-lv"><span>${esc(l.name)}</span><span class="tnum">${fmtAmt(l.allTime, m.unit)}</span></div>`).join('') : '<div class="rt-lv muted">Nothing logged yet.</div>';
+    return `<div class="rt-item"><button class="rt-row" aria-expanded="${open}" aria-controls="${pid}" data-act="repRow" data-move="${esc(m.moveId)}"><span class="rt-nm">${esc(noun(m.moveId))}</span><span class="rt-num tnum">${fmtAmt(m[key], m.unit)}</span><span class="rt-chev" aria-hidden="true">&rsaquo;</span></button>
+      <div class="rt-lvs" id="${pid}" role="group" aria-label="${esc(noun(m.moveId))} by level, all time"${open ? '' : ' hidden'}>${lv}</div></div>`;
+  }).join('');
+  return `<div class="section"><h2 class="title">Rep totals</h2><div class="reps"><p class="rt-head tnum">${head}</p>
+    <div class="seg" role="radiogroup" aria-label="Rep totals period">${seg}</div>${rows}<p class="rt-note">Both sides counted. Core shows time held.</p></div></div>`;
+}
 function viewProgress() {
   const mp = moveProgress(state), today = todayStr();
   const tdates = trainingDates(state), fdates = fastingDates(state);
@@ -293,7 +316,7 @@ function viewProgress() {
     : !prev ? `${plural(cur, 'set')} this week, none last week.`
     : `${plural(cur, 'set')} this week, ${diff === 0 ? 'the same as last week' : `${Math.abs(diff)} ${diff > 0 ? 'more' : 'fewer'} than last week`}.`;
   const trN = daysIn(tdates, 7, today), fsN = daysIn(fdates, 7, today);
-  return `<div class="section"><h2 class="title">Levels</h2>
+  return `${repCard(today)}<div class="section"><h2 class="title">Levels</h2>
     ${mp.map((m) => `<div class="lvl${lvlAttrs(m)}><div class="top"><span class="nm">${esc(m.name)}</span><span class="tg">Target ${m.target}/${m.range[1]}${m.unit === 'sec' ? 's' : ''}</span></div>
     <div class="ln">Level ${m.level + 1} of ${m.levelsTotal} &middot; ${esc(m.levelName)}${m.best ? ` &middot; best ${m.best}` : ''}</div><div class="bar"><i style="width:${Math.max(3, Math.min(100, m.pct))}%"></i></div></div>`).join('')}</div>
   <div class="section"><h2 class="title">Weekly volume</h2><p class="chartsum">${vsum}</p><div class="chart">${volumeChart(vol)}</div></div>
@@ -480,6 +503,7 @@ function renderSession() {
     mid = `<div class="celebrate">${sm.events.length ? '&#127881;' : '&#9989;'}</div><div class="mname">${sm.minimum ? 'Minimum day done' : 'Session done'}</div>
       <div class="lname">${sm.streak} day training streak</div>
       <table class="sumtable"><tr><th>Min</th><th>Move</th><th>${'Logged'}</th></tr>${sm.rows.map((r) => `<tr><td>${r.i}</td><td>${esc(r.name)}<div class="small muted">${esc(r.lvl)}${r.side ? ' &middot; ' + sideWord(r.side) : ''}</div></td><td>${r.reps}${r.unit === 'sec' ? 's' : ''}</td></tr>`).join('')}</table>
+      ${sm.totals && sm.totals.length ? `<div class="sumtot"><div class="small muted">This session</div>${sm.totals.map((t) => `${esc(noun(t.moveId))} <b class="tnum">${fmtAmt(t.total, t.unit)}</b>${t.bothSides ? ' <span class="muted">(both sides)</span>' : ''}`).join(' &middot; ')}</div>` : ''}
       ${sm.events.map((e) => { const [, ic, t] = evLabel(e); return `<div class="evcard">${ic} ${t}</div>`; }).join('')}
       ${sm.minimum ? '<p class="small muted">Minimum days keep your streak. They do not change your targets.</p>' : ''}`;
     bot = `<button class="btn block" data-act="closeSess">Done</button>`;
@@ -527,7 +551,7 @@ function finishRun(completed) {
   const res = finishSession(state, { startedAt: new Date(s.startMs).toISOString(), endedAt: new Date().toISOString(), minimum, sets, minutes: p.minutes });
   state = res.state; try { save(state); } catch (e) { toast('Could not save.'); }
   const streak = computeStreak(trainingDates(state), todayStr()).current;
-  s.summary = { minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })) };
+  s.summary = { minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })), totals: sessionTotals(sets) };
   s.phase = 'summary'; renderSession();
 }
 async function endEarly() {
@@ -642,6 +666,8 @@ const act = {
   beginRun: () => startRun(),
   pause: () => { const s = sess; if (s.pausedAt) { s.pausedTotal += Date.now() - s.pausedAt; s.pausedAt = null; unlockAudio(); lockScreen(); } else { s.pausedAt = Date.now(); } renderSession(); },
   endEarly: () => endEarly(),
+  repRange: (el) => { repRange = el.dataset.range; render(); },
+  repRow: (el) => { const id = el.dataset.move; if (repOpen.has(id)) repOpen.delete(id); else repOpen.add(id); render(); },
   form: (el) => openForm(el.dataset.move, Number(el.dataset.level), el)
 };
 // 3D form guide: three.js and the viewer load only when it is first opened. The EMOM timer is independent of it.

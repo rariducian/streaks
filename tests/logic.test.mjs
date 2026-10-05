@@ -659,3 +659,73 @@ test('store: load and importJSON migrate a v1 state', () => {
     assert.equal(l.version, 2); assert.equal(l.moves.hinge.level, 1); assert.equal(l.sessions[0].sets[3].legacy, 'One-arm KB swing (alternate sets)');
   } finally { delete globalThis.localStorage; }
 });
+
+// ---------- rep totals ----------
+const sess = (date, ss, minimum = false) => ({ id: date, date, minimum, sets: ss });
+const T = (rt, id) => rt.find((m) => m.moveId === id);
+
+test('repTotals: today, week (Monday start), 30 days and all time windows', () => {
+  const today = '2026-10-07'; // Wednesday. Week starts Mon 2026-10-05.
+  const s = fresh();
+  s.sessions = [
+    sess('2026-10-07', [{ moveId: 'hpush', level: 0, reps: 10 }]),
+    sess('2026-10-05', [{ moveId: 'hpush', level: 0, reps: 20 }]),          // Monday: in week
+    sess('2026-10-04', [{ moveId: 'hpush', level: 1, reps: 30 }]),          // Sunday: out of week, in 30 days
+    sess('2026-09-08', [{ moveId: 'hpush', level: 1, reps: 40 }]),          // 29 days back: in 30 days
+    sess('2026-09-07', [{ moveId: 'hpush', level: 1, reps: 50 }]),          // 30 days back: out
+  ];
+  const h = T(L.repTotals(s, today), 'hpush');
+  assert.equal(h.today, 10);
+  assert.equal(h.week, 30);
+  assert.equal(h.month, 100);
+  assert.equal(h.allTime, 150);
+  assert.equal(h.name, 'Horizontal push');
+  assert.equal(h.unit, 'reps');
+  assert.deepEqual(h.levels.map((l) => [l.level, l.name, l.allTime]), [[1, 'Deficit push-up (hands on books)', 120], [0, 'Standard push-up', 30]]);
+  const sq = T(L.repTotals(s, today), 'squat');
+  assert.deepEqual([sq.today, sq.week, sq.month, sq.allTime, sq.levels], [0, 0, 0, 0, []]);
+  assert.equal(L.repTotals(s, today).length, Object.keys(MOVES).length);
+});
+
+test('repTotals: week boundary on a Monday and on a Sunday', () => {
+  const s = fresh();
+  s.sessions = [sess('2026-10-04', [{ moveId: 'row', level: 1, reps: 8 }]), sess('2026-10-05', [{ moveId: 'row', level: 1, reps: 9 }])];
+  assert.equal(T(L.repTotals(s, '2026-10-05'), 'row').week, 9);   // Monday: only today
+  assert.equal(T(L.repTotals(s, '2026-10-11'), 'row').week, 9);   // Sunday: Mon to Sun
+  assert.equal(T(L.repTotals(s, '2026-10-12'), 'row').week, 0);   // next Monday
+});
+
+test('repTotals: legacy sets and minimum days count; per-side sets are summed', () => {
+  const s = fresh();
+  s.sessions = [
+    sess('2026-10-05', [{ moveId: 'row', level: null, legacy: 'One-arm KB row', reps: 12 }, { moveId: 'row', level: 1, reps: 5 }]),
+    sess('2026-10-05', [{ moveId: 'squat', level: 2, reps: 8, side: 'L' }, { moveId: 'squat', level: 2, reps: 7, side: 'R' }], true),
+  ];
+  const rt = L.repTotals(s, '2026-10-05');
+  assert.equal(T(rt, 'row').allTime, 17);
+  assert.deepEqual(T(rt, 'row').levels.map((l) => [l.level, l.name, l.allTime]), [[null, 'One-arm KB row', 12], [1, 'Inverted row under a table, knees bent', 5]]);
+  assert.equal(T(rt, 'squat').today, 15);
+  assert.equal(T(rt, 'squat').levels[0].allTime, 15);
+  assert.equal(T(rt, 'squat').levels[0].name, 'Split squat holding KB');
+});
+
+test('repTotals: sec unit gives seconds; future sessions only count all time; input is not mutated', () => {
+  const s = fresh();
+  s.sessions = [sess('2026-10-05', [{ moveId: 'core', level: 1, reps: 40 }, { moveId: 'core', level: 1, reps: 35 }]), sess('2026-10-20', [{ moveId: 'core', level: 1, reps: 30 }])];
+  const before = JSON.stringify(s);
+  const c = T(L.repTotals(s, '2026-10-07'), 'core');
+  assert.equal(c.unit, 'sec');
+  assert.equal(c.week, 75);
+  assert.equal(c.allTime, 105);
+  assert.equal(JSON.stringify(s), before);
+});
+
+test('sessionTotals sums per move and flags both sides', () => {
+  const t = L.sessionTotals([
+    { moveId: 'hpush', level: 0, reps: 12 }, { moveId: 'row', level: 4, reps: 9, side: 'L' },
+    { moveId: 'hpush', level: 0, reps: 10 }, { moveId: 'row', level: 4, reps: 8, side: 'R' }, { moveId: 'core', level: 1, reps: 30 },
+  ]);
+  assert.deepEqual(t.map((x) => [x.moveId, x.total, x.bothSides, x.unit]), [['hpush', 22, false, 'reps'], ['row', 17, true, 'reps'], ['core', 30, false, 'sec']]);
+  assert.deepEqual(L.sessionTotals([]), []);
+  assert.deepEqual(L.sessionTotals(undefined), []);
+});

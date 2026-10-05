@@ -1,5 +1,5 @@
 // Pure logic for streaks. No DOM. Never mutates input.
-import { DAYS, MOVES, FAST_STAGES, SESSION_MINUTES_STEPS, MINIMUM_MINUTES, DEFAULT_WORK_SEC } from './data.js';
+import { DAYS, MOVES, MOVE_LIST, FAST_STAGES, SESSION_MINUTES_STEPS, MINIMUM_MINUTES, DEFAULT_WORK_SEC } from './data.js';
 
 const clone = (x) => structuredClone(x);
 const HOUR = 3600000;
@@ -381,6 +381,49 @@ export function moveProgress(state) {
       pct: Math.round(clamp(((idx + frac) / usable.length) * 100, 0, 100)), best,
     };
   });
+}
+
+// ---------- rep totals ----------
+// Reps (or seconds for 'sec' moves) per move. Every set counts: minimum days, legacy sets, and both sides of per-side sets.
+const setReps = (x) => (Number.isFinite(x && x.reps) ? x.reps : 0);
+export function repTotals(state, today) {
+  const wk = weekStartOf(today), mo = addDays(today, -29);
+  const acc = Object.fromEntries(MOVE_LIST.map((m) => [m.id, { today: 0, week: 0, month: 0, allTime: 0, lv: new Map() }]));
+  for (const se of state.sessions) {
+    for (const x of se.sets || []) {
+      const a = acc[x.moveId];
+      if (!a) continue;
+      const r = setReps(x);
+      a.allTime += r;
+      if (se.date <= today) {
+        if (se.date === today) a.today += r;
+        if (se.date >= wk) a.week += r;
+        if (se.date >= mo) a.month += r;
+      }
+      const key = x.level == null ? `legacy:${x.legacy || ''}` : `lv:${x.level}`;
+      const e = a.lv.get(key) || { level: x.level ?? null, name: x.level == null ? (x.legacy || 'Retired exercise') : (MOVES[x.moveId].levels[x.level] || {}).name || `Level ${x.level + 1}`, allTime: 0 };
+      e.allTime += r;
+      a.lv.set(key, e);
+    }
+  }
+  return MOVE_LIST.map((m) => {
+    const a = acc[m.id];
+    const levels = [...a.lv.values()].sort((p, q) => q.allTime - p.allTime || (p.level ?? 99) - (q.level ?? 99));
+    return { moveId: m.id, name: m.name, unit: m.unit, today: a.today, week: a.week, month: a.month, allTime: a.allTime, levels };
+  });
+}
+
+// Totals for one session's sets: [{ moveId, name, unit, total, bothSides }] in first-seen order.
+export function sessionTotals(sets) {
+  const out = new Map();
+  for (const x of sets || []) {
+    if (!MOVES[x.moveId]) continue;
+    const e = out.get(x.moveId) || { moveId: x.moveId, name: MOVES[x.moveId].name, unit: MOVES[x.moveId].unit, total: 0, bothSides: false };
+    e.total += setReps(x);
+    if (x.side) e.bothSides = true;
+    out.set(x.moveId, e);
+  }
+  return [...out.values()];
 }
 
 export const recentEvents = (state, n = 10) => state.events.slice().reverse().slice(0, n);
