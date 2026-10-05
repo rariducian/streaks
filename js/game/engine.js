@@ -1,5 +1,6 @@
 // Tower engine: pure logic, no DOM. Mutates the game object it is given (state.game). Spec: docs/TOWER.md
 import { computeStreak, trainingDates } from '../logic.js';
+import { traitsOf, isElite } from './scene.js';
 
 export const CONFIG = {
   sessionSweat: 100, minimumSweat: 40, streakStep: 0.05, streakCap: 10, dailyLimit: 2, secondHalf: 0.5,
@@ -8,7 +9,7 @@ export const CONFIG = {
   atk: { base: 5, per: 2, cost: 20, grow: 1.04 }, hp: { base: 50, per: 15, cost: 20, grow: 1.04 },
   spd: { base: 1, per: 0.04, max: 3, cost: 25, grow: 1.05 },
   milestoneEvery: 10, milestoneMult: 1.5,   // every 10 levels of Attack or Health multiplies that stat (idle-game milestone), so late floors keep falling
-  soulBonus: 0.10, critDouble: 2,
+  critMult: 2,   // a crit does double damage, Crit damage affixes add to this
   enemyHp: 20, enemyHpGrow: 1.075, enemyAtk: 2, enemyAtkGrow: 1.075, bossEvery: 10, bossHp: 1.2, bossAtk: 1,
   walk: 2, rest: 10, gritStep: 0.0007, gritMax: 0.25, bossTimer: 30, maxIter: 20000,   // grit compounds per failed try (10 s each) and hits the +25% cap in about 53 min. Boss enrage: not dead by bossTimer seconds is a loss. See tools/tower-sim.mjs
   offlineBaseH: 24, offlineMaxH: 24, staminaPer: 0.10,   // 'endurance' is the save key for Stamina: +10% Sweat from sessions per level
@@ -17,12 +18,28 @@ export const CONFIG = {
   },
   precisionPer: 0.02, luckPer: 0.02,
   rarity: { common: { mult: 1, p: 0.70 }, rare: { mult: 1.5, p: 0.25 }, epic: { mult: 2.2, p: 0.05 } },
-  gearPct: 0.05, scrapPer: 5, dropLog: 5,
+  gearPct: 0.05, scrapPer: 5, dropLog: 5, stash: 6, tierGrow: 0.06, affSpread: 0.2,   // stash: unequipped drops kept (Hoarder adds more). Affix value = base x (1 + tierGrow x (tier-1)) x (1 +/- affSpread)
+  // Affixes: base value at tier 1, w = weight in the power score (per 1% of value), cap = most the whole kit can add up to
+  affix: {
+    lifesteal: { base: 0.08, w: 1.2 }, thorns: { base: 0.10, w: 0.8 }, critdmg: { base: 0.25, w: 0.4 }, boss: { base: 0.15, w: 0.6 },
+    swift: { base: 0.06, w: 1.5 }, guard: { base: 0.06, w: 1.5, cap: 0.5 }, ward: { base: 0.12, w: 0.8 }, train: { base: 0.05, w: 1, cap: 0.30 }
+  },
+  maxAffix: { common: 1, rare: 2, epic: 3 },
+  forge: { reroll: 40, add: 100, upgrade: 160, temper: 30, tierGrow: 1.35, temperGrow: 1.15, temperPct: 0.05 },   // Focus. cost = base x 1.35^tier x (1 - Ancestral forge); Temper also x 1.15^level
+  trait: { armour: 0.015, armourMin: 0.3, arcane: 0.3, regen: 0.015, burn: 0.3, chill: 0.25, swiftHits: 2 },   // armour: flat cut per hit as a share of enemy HP, never below armourMin of the hit. regen: enemy HP/s. burn: x enemy attack per second, ignores Guard
+  eliteHp: 1.15, eliteAtk: 1.1,   // every 5th floor that is not a boss. Higher values stalled daily trainers for up to 2 weeks in tools/tower-sim.mjs
+  talents: {   // souls. cost = ceil(cost x grow^level). per = effect per level
+    might: { max: 20, cost: 2, grow: 1.3, per: 0.08 }, vigour: { max: 20, cost: 2, grow: 1.3, per: 0.08 }, head: { max: 6, cost: 3, grow: 1.5, per: 5 },
+    wind: { max: 3, cost: 3, grow: 1.6, per: 15 }, prospector: { max: 5, cost: 3, grow: 1.4, per: 0.10 }, hoarder: { max: 4, cost: 2, grow: 1.5, per: 1 },
+    fortune: { max: 5, cost: 3, grow: 1.4, per: 0.02 }, ancestral: { max: 5, cost: 3, grow: 1.4, per: 0.05 }
+  },
   ascendMinFloor: 20
 };
 export const SLOTS = ['weapon', 'armour', 'boots'];
 export const SLOT_STAT = { weapon: 'atk', armour: 'hp', boots: 'spd' };
 export const RARITIES = ['common', 'rare', 'epic'];
+export const AFFIXES = Object.keys(CONFIG.affix);
+export const TALENTS = Object.keys(CONFIG.talents);
 
 export function ensureGame(state) {
   const g = state.game && typeof state.game === 'object' ? state.game : (state.game = {});
@@ -30,15 +47,28 @@ export function ensureGame(state) {
   for (const k of ['sweat', 'focus', 'souls', 'tokens', 'grit', 'prog', 'lastTick']) num(k, 0);
   for (const k of ['floor', 'runMax', 'bestFloor']) num(k, 1);
   const obj = (k, d) => { if (!g[k] || typeof g[k] !== 'object' || Array.isArray(g[k])) g[k] = d; };
-  obj('stats', {}); obj('focusUp', {}); obj('gear', {}); obj('paid', {});
+  num('soulsSpent', 0); num('seq', 0);
+  obj('stats', {}); obj('focusUp', {}); obj('gear', {}); obj('paid', {}); obj('talents', {});
   for (const k of ['atk', 'hp', 'spd']) num2(g.stats, k);
   for (const k of Object.keys(CONFIG.focusUp)) { num2(g.focusUp, k); g.focusUp[k] = Math.min(g.focusUp[k], CONFIG.focusUp[k].max); }
+  for (const k of TALENTS) { num2(g.talents, k); g.talents[k] = Math.min(Math.floor(g.talents[k]), CONFIG.talents[k].max); }
+  g.soulsSpent = Math.min(g.soulsSpent, g.souls);   // old saves: every soul earned so far is unspent
   for (const s of SLOTS) if (g.gear[s] === undefined) g.gear[s] = null;
+  if (!Array.isArray(g.stash)) g.stash = [];
+  for (const s of SLOTS) if (g.gear[s]) tidy(g, g.gear[s]);
+  g.stash = g.stash.filter((it) => it && SLOTS.includes(it.slot)); for (const it of g.stash) tidy(g, it);
   if (!Array.isArray(g.drops)) g.drops = [];
   if (g.away === undefined) g.away = null;
   return g;
 }
 function num2(o, k) { if (!Number.isFinite(o[k])) o[k] = 0; }
+// Old items have no affixes, level, lock or id. Fill them in without touching bonus.
+function tidy(g, it) {
+  it.aff = Array.isArray(it.aff) ? it.aff.filter((a) => a && CONFIG.affix[a.id] && Number.isFinite(a.v)) : [];
+  if (!Number.isFinite(it.lvl)) it.lvl = 0;
+  it.lock = !!it.lock; it.added = !!it.added;
+  if (!Number.isFinite(it.id)) it.id = ++g.seq;
+}
 
 // ---------- rewards ----------
 export const streakMult = (streak) => 1 + CONFIG.streakStep * Math.min(streak, CONFIG.streakCap);
@@ -46,7 +76,7 @@ export const focusForFast = (hours, minH) => hours >= minH ? Math.min(CONFIG.foc
 
 // Pays every session, event and fast not yet in game.paid. Safe to call any number of times.
 export function syncRewards(state, now = Date.now()) {
-  const g = ensureGame(state), out = { sweat: 0, focus: 0, tokens: 0, items: 0 }, stam = 1 + CONFIG.staminaPer * (g.focusUp.endurance || 0);
+  const g = ensureGame(state), out = { sweat: 0, focus: 0, tokens: 0, items: 0 }, stam = 1 + CONFIG.staminaPer * (g.focusUp.endurance || 0) + trainBonus(g) + talFx(g, 'prospector');
   const sessions = (state.sessions || []).map((s, i) => ({ s, i })).sort((a, b) => (a.s.date || '').localeCompare(b.s.date || '') || String(a.s.startedAt || '').localeCompare(String(b.s.startedAt || '')) || a.i - b.i);
   const dates = trainingDates(state), streakAt = new Map(), seen = new Map();
   for (const { s } of sessions) {
@@ -82,28 +112,54 @@ export const statCost = (stat, lv) => upCost(CONFIG[stat], lv);
 export const focusCost = (up, lv) => upCost(CONFIG.focusUp[up], lv);
 export const focusMax = (up) => CONFIG.focusUp[up].max;
 const gearMult = (g, slot) => 1 + ((g.gear && g.gear[slot]) ? g.gear[slot].bonus : 0);
+const tal = (g, k) => (g.talents && g.talents[k]) || 0;
+const talFx = (g, k) => tal(g, k) * CONFIG.talents[k].per;
+
+// ---------- affixes ----------
+// Sum of one affix over the three equipped items, capped where the config says so.
+export function affixTotal(g, id) {
+  let t = 0; for (const s of SLOTS) { const it = g.gear && g.gear[s]; if (it) for (const a of it.aff || []) if (a.id === id) t += a.v; }
+  const c = CONFIG.affix[id].cap; return c ? Math.min(c, t) : t;
+}
+export const trainBonus = (g) => affixTotal(g, 'train');
+export const affixValue = (id, tier, r) => Math.round(CONFIG.affix[id].base * (1 + CONFIG.tierGrow * (tier - 1)) * (1 - CONFIG.affSpread + 2 * CONFIG.affSpread * r) * 1000) / 1000;
+export function rollAffix(tier, have, rng = Math.random) {
+  const pool = AFFIXES.filter((id) => !have.some((a) => a.id === id)), id = pool[Math.min(pool.length - 1, Math.floor(rng() * pool.length))];
+  return { id, v: affixValue(id, tier, rng()) };
+}
+// Power score: base bonus plus weighted affixes, in percentage points. Used to compare gear.
+export const power = (it) => !it ? 0 : Math.round(((it.bonus || 0) * 100 + (it.aff || []).reduce((p, a) => p + a.v * 100 * CONFIG.affix[a.id].w, 0)) * 10) / 10;
+export const baseBonus = (it) => CONFIG.gearPct * it.tier * CONFIG.rarity[it.rarity].mult * (1 + CONFIG.forge.temperPct * (it.lvl || 0));
 
 export function heroStats(g) {
-  const L = g.stats, souls = 1 + CONFIG.soulBonus * (g.souls || 0), ms = (lv) => Math.pow(CONFIG.milestoneMult, Math.floor(lv / CONFIG.milestoneEvery));
+  const L = g.stats, ms = (lv) => Math.pow(CONFIG.milestoneMult, Math.floor(lv / CONFIG.milestoneEvery));
   return {
-    atk: (CONFIG.atk.base + CONFIG.atk.per * L.atk) * ms(L.atk) * gearMult(g, 'weapon') * souls,
-    hp: (CONFIG.hp.base + CONFIG.hp.per * L.hp) * ms(L.hp) * gearMult(g, 'armour') * souls,
+    atk: (CONFIG.atk.base + CONFIG.atk.per * L.atk) * ms(L.atk) * gearMult(g, 'weapon') * (1 + talFx(g, 'might')),
+    hp: (CONFIG.hp.base + CONFIG.hp.per * L.hp) * ms(L.hp) * gearMult(g, 'armour') * (1 + talFx(g, 'vigour')),
     spd: Math.min(CONFIG.spd.max, CONFIG.spd.base + CONFIG.spd.per * L.spd) * gearMult(g, 'boots'),
-    crit: CONFIG.precisionPer * (g.focusUp.precision || 0)
+    crit: CONFIG.precisionPer * (g.focusUp.precision || 0), critMult: CONFIG.critMult + affixTotal(g, 'critdmg')
   };
 }
 export const isBoss = (n) => n % CONFIG.bossEvery === 0;
 export function enemy(n) {
-  const b = isBoss(n);
-  return { floor: n, boss: b, hp: CONFIG.enemyHp * Math.pow(CONFIG.enemyHpGrow, n - 1) * (b ? CONFIG.bossHp : 1), atk: CONFIG.enemyAtk * Math.pow(CONFIG.enemyAtkGrow, n - 1) * (b ? CONFIG.bossAtk : 1) };
+  const b = isBoss(n), el = isElite(n);
+  return { floor: n, boss: b, elite: el, hp: CONFIG.enemyHp * Math.pow(CONFIG.enemyHpGrow, n - 1) * (b ? CONFIG.bossHp : 1) * (el ? CONFIG.eliteHp : 1), atk: CONFIG.enemyAtk * Math.pow(CONFIG.enemyAtkGrow, n - 1) * (b ? CONFIG.bossAtk : 1) * (el ? CONFIG.eliteAtk : 1) };
 }
-// Closed form fight. Grit is temporary attack from failed tries on the current floor (capped). A boss also needs killing inside bossTimer.
+export const bossTimer = (g) => CONFIG.bossTimer + talFx(g, 'wind');
+// Closed form fight. Grit is temporary attack from failed tries on the current floor (capped). A boss also needs killing inside the boss timer.
+// Affixes and zone traits fold into two numbers: dps (damage to the enemy per second, net of armour and regen) and net (damage to the hero per second, net of Lifesteal).
 export function fight(g, n) {
-  const h = heroStats(g), e = enemy(n);
-  const dps = h.atk * (1 + (g.grit || 0)) * h.spd * (1 + h.crit);
-  const t = e.hp / dps;
-  const live = e.atk * t < h.hp, late = e.boss && t > CONFIG.bossTimer;
-  return { win: live && !late, late: live && late, t, dps, hero: h, enemy: e, tDie: h.hp / e.atk, walk: CONFIG.walk / h.spd };
+  const h = heroStats(g), e = enemy(n), tr = traitsOf(n), T = CONFIG.trait, has = (t) => tr.includes(t), A = (id) => affixTotal(g, id), timer = bossTimer(g);
+  const spd = h.spd * Math.max(0.25, 1 + A('swift') - (has('chill') ? T.chill : 0));
+  let hit = h.atk * (1 + (g.grit || 0)) * (1 + (e.boss ? A('boss') : 0)) * (1 + (tr.length ? A('ward') : 0));
+  hit *= 1 + Math.min(1, h.crit) * (h.critMult - 1);   // average hit, crits included
+  if (has('armour')) hit = Math.max(hit * T.armourMin, hit - T.armour * e.hp);
+  const edps = e.atk * (has('swift') ? T.swiftHits : 1) * (has('arcane') ? 1 + T.arcane : 1) * (1 - Math.min(A('guard'), CONFIG.affix.guard.cap)) + (has('burn') ? T.burn * e.atk : 0);
+  const dealt = hit * spd, dps = dealt + A('thorns') * edps - (has('regen') ? T.regen * e.hp : 0);   // thorns: reflected damage also hurts the enemy
+  const net = edps - A('lifesteal') * dealt;
+  const t = dps > 0 ? e.hp / dps : Infinity;
+  const live = net <= 0 || net * t < h.hp, late = e.boss && t > timer;
+  return { win: live && !late && isFinite(t), late: live && late, t, dps, hero: h, enemy: e, edps, net, timer, tDie: net > 0 ? h.hp / net : Infinity, walk: CONFIG.walk / h.spd, traits: tr };
 }
 
 export function buyStat(g, stat) {
@@ -125,20 +181,80 @@ export function buyFocus(g, up) {
 export function rollDrop(g, floor, rng = Math.random) {
   const slot = SLOTS[Math.min(2, Math.floor(rng() * 3))];
   const tier = Math.ceil(floor / CONFIG.bossEvery);
-  const shift = CONFIG.luckPer * (g.focusUp.luck || 0), r = rng();
+  const shift = CONFIG.luckPer * (g.focusUp.luck || 0) + talFx(g, 'fortune'), r = rng();
   const epicP = CONFIG.rarity.epic.p + shift, rareP = CONFIG.rarity.rare.p;
   const rarity = r < epicP ? 'epic' : r < epicP + rareP ? 'rare' : 'common';
-  return { slot, tier, rarity, bonus: CONFIG.gearPct * tier * CONFIG.rarity[rarity].mult, floor };
+  const aff = []; for (let i = 0; i < CONFIG.maxAffix[rarity]; i++) aff.push(rollAffix(tier, aff, rng));
+  return { slot, tier, rarity, bonus: CONFIG.gearPct * tier * CONFIG.rarity[rarity].mult, floor, lvl: 0, aff, lock: false, added: false };
 }
+export const stashMax = (g) => CONFIG.stash + talFx(g, 'hoarder');
+const scrapOf = (it) => CONFIG.scrapPer * it.tier;
+const own = (it) => ({ slot: it.slot, tier: it.tier, rarity: it.rarity, bonus: it.bonus, floor: it.floor, id: it.id, lvl: it.lvl || 0, aff: (it.aff || []).map((a) => ({ ...a })), lock: !!it.lock, added: !!it.added });
+// Puts an item in the stash. Over the limit, the oldest unlocked item is scrapped for Sweat (the new one itself if everything is locked). Returns Sweat scrapped.
+function stow(g, it) {
+  g.stash.push(it); let scrap = 0;
+  while (g.stash.length > stashMax(g)) {
+    const i = g.stash.findIndex((x) => !x.lock); if (i < 0) break;
+    scrap += scrapOf(g.stash[i]); g.stash.splice(i, 1);
+  }
+  g.sweat += scrap; return scrap;
+}
+// A better power score replaces the equipped item unless that one is locked. The loser goes to the stash.
 export function giveDrop(g, item) {
-  const cur = g.gear[item.slot];
-  const better = !cur || item.bonus > cur.bonus;
-  const rec = { ...item, equipped: better, scrap: better ? 0 : CONFIG.scrapPer * item.tier };
-  if (better) g.gear[item.slot] = { slot: item.slot, tier: item.tier, rarity: item.rarity, bonus: item.bonus };
-  else g.sweat += rec.scrap;
+  const cur = g.gear[item.slot], it = own(item); it.id = ++g.seq;
+  const better = !cur || (!cur.lock && power(it) > power(cur));
+  let scrap = 0;
+  if (better) { g.gear[it.slot] = it; if (cur) scrap = stow(g, cur); } else scrap = stow(g, it);
+  const rec = { ...own(it), equipped: better, scrap }; delete rec.id;
   g.drops.push(rec); if (g.drops.length > CONFIG.dropLog) g.drops.splice(0, g.drops.length - CONFIG.dropLog);
   return rec;
 }
+export const findItem = (g, id) => SLOTS.map((s) => g.gear[s]).concat(g.stash).find((it) => it && it.id === id) || null;
+export function toggleLock(g, id) { const it = findItem(g, id); if (!it) return false; it.lock = !it.lock; return true; }
+// Swap a stashed item with the equipped one in its slot. Refused while the equipped item is locked.
+export function equip(g, id) {
+  const i = g.stash.findIndex((x) => x.id === id); if (i < 0) return false;
+  const it = g.stash[i], cur = g.gear[it.slot]; if (cur && cur.lock) return false;
+  g.stash.splice(i, 1, ...(cur ? [cur] : [])); g.gear[it.slot] = it; return true;
+}
+
+// ---------- forge (Focus) ----------
+export const FORGE = ['reroll', 'add', 'upgrade', 'temper'];
+export function forgeCost(g, action, it) {
+  const F = CONFIG.forge, c = F[action]; if (!c || !it) return 0;
+  return Math.ceil(c * Math.pow(F.tierGrow, it.tier) * (action === 'temper' ? Math.pow(F.temperGrow, it.lvl || 0) : 1) * (1 - talFx(g, 'ancestral')));
+}
+// Why an action is not possible on an item ('' when it is). Cost is checked separately.
+export function forgeBlock(it, action, i = 0) {
+  if (!it) return 'No item';
+  const max = CONFIG.maxAffix[it.rarity];
+  if (action === 'reroll') return it.aff[i] ? '' : 'No such affix';
+  if (action === 'add') return it.added ? 'Already added one' : it.aff.length >= max + 1 ? 'Full' : '';
+  if (action === 'upgrade') return it.rarity === 'epic' ? 'Already epic' : '';
+  return action === 'temper' ? '' : 'Unknown action';
+}
+// Spend Focus on the equipped item of a slot. i is the affix to reroll. Returns true if it worked.
+export function forge(g, slot, action, i = 0, rng = Math.random) {
+  const it = g.gear[slot]; if (forgeBlock(it, action, i)) return false;
+  const c = forgeCost(g, action, it); if (g.focus < c) return false;
+  g.focus -= c;
+  if (action === 'reroll') { const rest = it.aff.filter((_, k) => k !== i); it.aff[i] = rollAffix(it.tier, rest, rng); }
+  else if (action === 'add') { it.aff.push(rollAffix(it.tier, it.aff, rng)); it.added = true; }
+  else if (action === 'upgrade') { it.rarity = RARITIES[RARITIES.indexOf(it.rarity) + 1]; it.aff.push(rollAffix(it.tier, it.aff, rng)); it.bonus = baseBonus(it); }
+  else { it.lvl = (it.lvl || 0) + 1; it.bonus = baseBonus(it); }
+  return true;
+}
+
+// ---------- soul tree ----------
+export const soulsLeft = (g) => Math.max(0, g.souls - g.soulsSpent);
+export const talentCost = (k, lv) => Math.ceil(CONFIG.talents[k].cost * Math.pow(CONFIG.talents[k].grow, lv));
+export function buyTalent(g, k) {
+  const d = CONFIG.talents[k]; if (!d || g.talents[k] >= d.max) return false;
+  const c = talentCost(k, g.talents[k]); if (soulsLeft(g) < c) return false;
+  g.soulsSpent += c; g.talents[k]++; return true;
+}
+export const canRespec = (g) => !g.respecUsed && g.soulsSpent > 0;
+export function respec(g) { if (!canRespec(g)) return false; for (const k of TALENTS) g.talents[k] = 0; g.soulsSpent = 0; g.respecUsed = true; return true; }
 
 // ---------- the climb ----------
 // Runs the sim floor by floor for `seconds`. g.prog holds time already spent on the current attempt.
@@ -170,19 +286,22 @@ export function offlineCatchUp(state, now = Date.now(), rng = Math.random) {
   g.lastTick = t;
   if (secs < 60 || (!sum.floors && !sum.bosses)) return null;
   const rank = { epic: 3, rare: 2, common: 1 };
-  const best = sum.drops.slice().sort((a, b) => rank[b.rarity] - rank[a.rarity] || b.bonus - a.bonus)[0] || null;
-  g.away = { seconds: Math.round(secs), capped: el > cap, floors: sum.floors, bosses: sum.bosses, best: best && { slot: best.slot, tier: best.tier, rarity: best.rarity, bonus: best.bonus, equipped: best.equipped }, to: g.floor };
+  const best = sum.drops.slice().sort((a, b) => rank[b.rarity] - rank[a.rarity] || power(b) - power(a))[0] || null;
+  g.away = { seconds: Math.round(secs), capped: el > cap, floors: sum.floors, bosses: sum.bosses, best: best && { slot: best.slot, tier: best.tier, rarity: best.rarity, bonus: best.bonus, power: power(best), equipped: best.equipped }, to: g.floor };
   return g.away;
 }
 
 export function canAscend(g) { return g.tokens >= 1 && g.runMax >= CONFIG.ascendMinFloor; }
 export const soulsFor = (g) => Math.floor(Math.sqrt(g.runMax));
+export const headStart = (g, from = g.runMax) => Math.max(1, Math.min(1 + talFx(g, 'head'), from - 1));   // never past the floor you reached, less one
 export function ascend(g) {
   if (!canAscend(g)) return null;
-  const gain = soulsFor(g);
-  g.souls += gain; g.tokens -= 1; g.floor = 1; g.runMax = 1; g.grit = 0; g.prog = 0;
-  let keep = null;   // the single best item stays equipped
-  for (const s of SLOTS) if (g.gear[s] && (!keep || g.gear[s].bonus > g.gear[keep].bonus)) keep = s;
-  for (const s of SLOTS) if (s !== keep) g.gear[s] = null;
+  const gain = soulsFor(g), start = headStart(g);
+  g.souls += gain; g.tokens -= 1; g.floor = start; g.runMax = start; g.grit = 0; g.prog = 0; g.respecUsed = false;
+  let keep = null;   // the single best item stays equipped, and so do locked ones
+  for (const s of SLOTS) if (g.gear[s] && (!keep || power(g.gear[s]) > power(g.gear[keep]))) keep = s;
+  for (const s of SLOTS) if (s !== keep && !(g.gear[s] && g.gear[s].lock)) g.gear[s] = null;
+  for (const it of g.stash) if (!it.lock) g.sweat += scrapOf(it);   // unlocked stash items are scrapped; locked ones stay
+  g.stash = g.stash.filter((it) => it.lock);
   return gain;
 }

@@ -1,11 +1,11 @@
-const CACHE = 'streaks-v17';
+const CACHE = 'streaks-v19';
 const THREE_CACHE = 'streaks-three-0.170.0';           // pinned version, so cache-first is safe
 const THREE_PREFIX = 'https://cdn.jsdelivr.net/npm/three@0.170.0/';
 const MOVES = ['hpush', 'vpush', 'squat', 'hinge', 'row', 'core'];   // moves that have pose files (hamcurl and calf have none yet)
 const FILES = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/app.js', 'js/data.js', 'js/logic.js', 'js/store.js',
-  'js/game/engine.js', 'js/game/sprites.js', 'js/game/view.js',
+  'js/game/engine.js', 'js/game/sprites.js', 'js/game/scene.js', 'js/game/view.js',
   'js/form/viewer.js', 'js/form/skeleton.js', 'js/form/cues-common.js', 'js/form/pending.js',
   ...MOVES.flatMap((m) => [`js/form/poses/${m}.js`, `js/form/poses/${m}.gen.js`]),   // not-yet-authored moves 404 and are skipped
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'

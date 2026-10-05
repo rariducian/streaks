@@ -413,7 +413,10 @@ body.fv-lock{overflow:hidden}
 .btn:disabled{opacity:.38;cursor:default;transform:none}
 .tw-battle{position:relative;border-radius:20px;overflow:hidden;background:#1d1d23;box-shadow:var(--pill-shadow)}
 #tw-canvas{display:block;width:100%;height:200px;image-rendering:pixelated;image-rendering:crisp-edges}
-.tw-badge{position:absolute;left:10px;top:10px;z-index:1;background:rgba(30,27,38,.82);color:#f1f2f6;font-size:0.765rem;font-weight:700;padding:5px 10px;border-radius:999px;letter-spacing:.01em}
+.tw-badge{position:absolute;left:10px;top:10px;max-width:calc(100% - 20px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;z-index:1;background:rgba(30,27,38,.82);color:#f1f2f6;font-size:0.765rem;font-weight:700;padding:5px 10px;border-radius:999px;letter-spacing:.01em}
+.tw-badge .bs,.tw-badge.sm .bl{display:none}.tw-badge.sm .bs{display:inline}
+.tw-trait{margin:10px 4px 0;font-size:0.794rem;color:var(--muted)}
+.tw-note{margin:8px 4px 0}
 .tw-away{margin-top:12px}
 .tw-curs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
 .tw-cur{background:var(--card);border-radius:18px;padding:10px 8px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:1px;min-width:0}
@@ -434,3 +437,13 @@ body.fv-lock{overflow:hidden}
 .tw-how b{color:var(--text)}
 .tw-asc b{color:var(--text)}
 .tw-away p{margin:0}
+.tw-gear{width:100%;text-align:left}
+.tw-go{flex:none;font-size:1.4rem;color:var(--muted);line-height:1}
+.tw-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.tw-chip{font-size:0.647rem;font-weight:650;padding:2px 8px;border-radius:99px;background:var(--bg);color:var(--text);white-space:nowrap}
+.tw-stashline{border-bottom:0;padding:10px 0}
+.tw-card .btn.soft{background:var(--bg)}
+.tw-h4{margin:18px 2px 8px;font-size:0.882rem;font-weight:700}
+.tw-fh{margin:0 0 4px;display:flex;justify-content:space-between;font-size:0.882rem;color:var(--muted)}.tw-fh b{color:var(--purple-text)}
+.tw-msg{min-height:1.2em;margin:0 0 8px}
+.tw-btns{display:flex;flex-direction:column;gap:6px;flex:none}.tw-btns .btn{min-width:78px}

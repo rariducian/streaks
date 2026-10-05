@@ -7,8 +7,8 @@ import {
   acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals
 } from './logic.js';
 import { load, save, exportJSON, importJSON } from './store.js';
-import { ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend } from './game/engine.js';
-import { viewTower, mountTower, unmountTower, refreshTowerUi } from './game/view.js';
+import { ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, forge, forgeCost, toggleLock, equip } from './game/engine.js';
+import { viewTower, mountTower, unmountTower, refreshTowerUi, gearSheet, AFF_NAME } from './game/view.js';
 
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -60,7 +60,7 @@ const formChip = (moveId, level, levelName) => isGuidePending(moveId, level) ? '
 /* ---------- app state ---------- */
 let state = load();
 let tab = 'today';
-let sheet = null;       // { type, id? }
+let sheet = null;       // { type, id?, slot?, msg? }
 let sess = null;        // session UI state
 let ticker = null;
 
@@ -367,6 +367,8 @@ function sheetHtml() {
         <input type="file" id="importFile" accept="application/json,.json" hidden>
         <button class="btn soft block red-text" data-act="reset">Reset all data</button></div>
       <p class="small muted" style="text-align:center;margin-top:14px">All data stays on this phone.</p>`;
+  } else if (sheet.type === 'gear') {
+    const r = gearSheet(ensureGame(state), sheet.slot, sheet.msg); title = r.title; body = r.body;
   } else if (sheet.type === 'quick') {
     title = 'Quick log';
     const run = runningFast(state);
@@ -699,9 +701,22 @@ const act = {
   repRow: (el) => { const id = el.dataset.move; if (repOpen.has(id)) repOpen.delete(id); else repOpen.add(id); render(); },
   buyStat: (el) => { if (buyStat(ensureGame(state), el.dataset.stat)) { save(state); refreshTowerUi(state); } },
   buyFocus: (el) => { if (buyFocus(ensureGame(state), el.dataset.up)) { save(state); refreshTowerUi(state); } },
+  buyTalent: (el) => { if (buyTalent(ensureGame(state), el.dataset.talent)) { save(state); refreshTowerUi(state); } },
+  respec: () => { if (respec(ensureGame(state))) { save(state); refreshTowerUi(state); toast('Talents refunded.'); } },
+  gearSheet: (el) => { unmountTower(); sheet = { type: 'gear', slot: el.dataset.slot, msg: '' }; renderSheet(); },
+  // forge, lock and equip only re-render the sheet and patch the tab behind it, never the canvas
+  forge: (el) => {
+    const g = ensureGame(state), slot = el.dataset.slot, a = el.dataset.fa, i = Number(el.dataset.i) || 0, it = g.gear[slot], c = forgeCost(g, a, it), was = it && it.aff[i] && it.aff[i].id;
+    if (forge(g, slot, a, i)) {
+      const n = g.gear[slot], msg = a === 'reroll' ? `Rerolled ${AFF_NAME[was]} into ${AFF_NAME[n.aff[i].id]}.` : a === 'add' ? `Added ${AFF_NAME[n.aff[n.aff.length - 1].id]}.` : a === 'upgrade' ? `Upgraded to ${n.rarity}, added ${AFF_NAME[n.aff[n.aff.length - 1].id]}.` : `Tempered to level ${n.lvl}.`;
+      sheet.msg = `${msg} Spent ${c} Focus.`; save(state); refreshTowerUi(state); renderSheet();
+    }
+  },
+  lockItem: (el) => { if (toggleLock(ensureGame(state), Number(el.dataset.id))) { sheet.msg = ''; save(state); renderSheet(); } },
+  equipItem: (el) => { if (equip(ensureGame(state), Number(el.dataset.id))) { sheet.msg = 'Equipped.'; save(state); renderSheet(); } },
   ascend: async () => {
     const g = ensureGame(state); if (!canAscend(g)) return;
-    if (!(await ask({ title: 'Ascend now?', message: 'Your floor resets to 1. You keep your best gear item, stats, Focus upgrades and currencies, and gain souls.', confirmLabel: 'Ascend' }))) return;
+    if (!(await ask({ title: 'Ascend now?', message: 'Your floor resets (talents like Head start can raise it). You keep your best gear item, locked items, stats, Focus upgrades and currencies, and gain souls to spend in the Soul tree.', confirmLabel: 'Ascend' }))) return;
     const n = ascend(g); save(state); render(); toast(`Ascended. +${n} souls.`);
   },
   form: (el) => openForm(el.dataset.move, Number(el.dataset.level), el)
