@@ -41,8 +41,11 @@ const I = {
   bolt: '<svg aria-hidden="true" class="ic sm" viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6z"/></svg>',
   check: '<svg aria-hidden="true" class="ic sm" viewBox="0 0 24 24" style="stroke-width:3"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   moon: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>',
-  x: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+  x: '<svg aria-hidden="true" class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  info: '<svg aria-hidden="true" class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/></svg>'
 };
+// "Form" capsule: opens the 3D form guide for a move level. It never touches the session timer.
+const formChip = (moveId, level, levelName) => `<button class="formchip" data-act="form" data-move="${esc(moveId)}" data-level="${level}" aria-label="Form guide: ${esc(levelName)}">${I.info}<span>Form</span></button>`;
 
 /* ---------- app state ---------- */
 let state = load();
@@ -284,7 +287,7 @@ function viewProgress() {
     : `${plural(cur, 'set')} this week, ${diff === 0 ? 'the same as last week' : `${Math.abs(diff)} ${diff > 0 ? 'more' : 'fewer'} than last week`}.`;
   const trN = daysIn(tdates, 7, today), fsN = daysIn(fdates, 7, today);
   return `<div class="section"><h2 class="title">Levels</h2>
-    ${mp.map((m) => `<div class="lvl"><div class="top"><span class="nm">${esc(m.name)}</span><span class="tg">Target ${m.target}/${m.range[1]}${m.unit === 'sec' ? 's' : ''}</span></div>
+    ${mp.map((m) => `<div class="lvl tappable" role="button" tabindex="0" data-act="form" data-move="${esc(m.moveId)}" data-level="${m.level}" aria-label="Form guide: ${esc(m.name)}, ${esc(m.levelName)}"><div class="top"><span class="nm">${esc(m.name)}</span><span class="tg">Target ${m.target}/${m.range[1]}${m.unit === 'sec' ? 's' : ''}</span></div>
     <div class="ln">Level ${m.level + 1} of ${m.levelsTotal} &middot; ${esc(m.levelName)}${m.best ? ` &middot; best ${m.best}` : ''}</div><div class="bar"><i style="width:${Math.max(3, Math.min(100, m.pct))}%"></i></div></div>`).join('')}</div>
   <div class="section"><h2 class="title">Weekly volume</h2><p class="chartsum">${vsum}</p><div class="chart">${volumeChart(vol)}</div></div>
   <div class="section"><h2 class="title">Highlights</h2><div class="feed">${ev.map((e) => { const [c, ic, t] = evLabel(e); return `<div class="ev"><div class="bd ${c}">${ic}</div><div><div>${t}</div><div class="when">${esc(dmy(new Date(e.at)))}</div></div></div>`; }).join('') || '<div class="empty">Your level-ups and personal bests will show here.</div>'}</div></div>
@@ -410,7 +413,7 @@ function renderSession() {
   let mid = '', bot = '';
   if (s.phase === 'calib') {
     const c = s.calib, lvl = levelOf(c.id, c.level), r = c.result;
-    mid = `<div class="kicker">Test set ${s.ci + 1} of ${s.queue.length}</div><div class="mname">${esc(c.pm.name)}</div><div class="lname">${esc(lvl.name)}</div><div class="cue">${esc(lvl.cue || '')}</div>`;
+    mid = `<div class="kicker">Test set ${s.ci + 1} of ${s.queue.length}</div><div class="mname">${esc(c.pm.name)}</div><div class="lname">${esc(lvl.name)} ${formChip(c.id, c.level, lvl.name)}</div><div class="cue">${esc(lvl.cue || '')}</div>`;
     if (!r) {
       mid += `<p class="muted" style="margin:14px 0 0">Do one max set with good form. How many ${unitWord(c.pm)} did you get?</p>${stepperHtml('calib', c.max)}`;
       bot = `<button class="btn block" data-act="calibGo">Log max set</button>`;
@@ -439,7 +442,7 @@ function renderSession() {
     const warn = s.wlOk === false ? '<div class="warn" style="align-self:center">Keep your screen on manually.</div>' : '';
     if (!logged) {
       mid = `${label}<div class="timer" id="timer">--:--</div><div class="dots">${dots}</div>
-      <div class="mname">${esc(pm.name)}</div><div class="lname">${esc(pm.levelName)}</div><div class="cue">${esc(pm.cue)}${pm.perSide ? ' (each side)' : ''}</div>
+      <div class="mname">${esc(pm.name)}</div><div class="lname">${esc(pm.levelName)} ${formChip(pm.moveId, pm.level, pm.levelName)}</div><div class="cue">${esc(pm.cue)}${pm.perSide ? ' (each side)' : ''}</div>
       <div class="target" style="margin-top:8px">Target ${pm.target} ${pm.unit === 'sec' ? 'sec' : 'reps'}</div>
       <div class="kicker" style="margin-top:12px">${pm.unit === 'sec' ? 'Seconds' : 'Reps'} this minute</div>${stepperHtml('log', s.logs[s.idx])}
       ${prev ? `<div class="prevrow"><span>Last minute</span>${stepperHtml('prev', s.logs[s.idx - 1], true)}</div>` : ''}
@@ -610,8 +613,15 @@ const act = {
   beginRun: () => startRun(),
   logDone: () => { const s = sess; if (!s || s.phase !== 'run') return; s.logged[s.idx] = true; renderSession(); },
   pause: () => { const s = sess; if (s.pausedAt) { s.pausedTotal += Date.now() - s.pausedAt; s.pausedAt = null; unlockAudio(); lockScreen(); } else { s.pausedAt = Date.now(); } renderSession(); },
-  endEarly: () => endEarly()
+  endEarly: () => endEarly(),
+  form: (el) => openForm(el.dataset.move, Number(el.dataset.level), el)
 };
+// 3D form guide: three.js and the viewer load only when it is first opened. The EMOM timer is independent of it.
+let formMod = null;
+async function openForm(moveId, level, opener) {
+  try { formMod = formMod || await import('./form/viewer.js'); } catch (e) { toast('Could not load the form guide. Try again.'); return; }
+  formMod.openForm({ moveId, level, opener });
+}
 const changes = {
   stepSet: (el) => {
     const s = sess; if (!s) return;
@@ -629,6 +639,9 @@ const changes = {
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]'); if (!el || !act[el.dataset.act]) return;
   act[el.dataset.act](el);
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[role="button"][data-act]')) { e.preventDefault(); e.target.click(); }
 });
 document.addEventListener('change', (e) => {
   const el = e.target;
