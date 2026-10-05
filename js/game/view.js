@@ -1,6 +1,6 @@
 // Tower tab: HTML view plus the battle canvas. Isometric stone floor, chibi units, drawn at art resolution then scaled up crisp.
 import { CONFIG, SLOTS, SLOT_STAT, TALENTS, ensureGame, heroStats, fight, advance, offlineCatchUp, statCost, focusCost, focusMax, canAscend, soulsFor, isBoss, power, forgeCost, forgeBlock, stashMax, soulsLeft, talentCost, canRespec } from './engine.js';
-import { getSprite } from './sprites.js';
+import { getSprite, PAL, hexA } from './sprites.js';
 import { AW, PAD, AH, HERO, FOE, mk, sceneFor, zoneOf, enemyKind, enemyName, isElite, traitLine, glow, hash } from './scene.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -132,26 +132,27 @@ export function viewTower(state) {
 const R = (x, c, X, Y, w, h) => { x.fillStyle = c; x.fillRect(X, Y, w, h); };
 // 3x5 pixel digits for damage numbers
 const GLYPH = { 0: '111101101101111', 1: '010110010010111', 2: '111001111100111', 3: '111001111001111', 4: '101101111001001', 5: '111100111001111', 6: '111100111101111', 7: '111001001010010', 8: '111101111101111', 9: '111101111001111', k: '101101110101101', M: '101111111101101', '!': '010010010000010', B: '110101110101110', '.': '000000000000010', '-': '000000111000000', K: '101101110101101', O: '111101101101111' };
-function text(x, s, X, Y, col = '#fff', sc = 1) {
+function text(x, s, X, Y, col = PAL.white, sc = 1) {
   const draw = (ox, oy, c) => { x.fillStyle = c; let cx = X + ox; for (const ch of s) { const gl = GLYPH[ch]; if (gl) for (let i = 0; i < 15; i++) if (gl[i] === '1') x.fillRect(cx + i % 3 * sc, Y + oy + Math.floor(i / 3) * sc, sc, sc); cx += 4 * sc; } };
-  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) draw(dx, dy, '#1e1b26');
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) draw(dx, dy, PAL.ink);
   draw(0, 0, col);
 }
 const textW = (s, sc = 1) => (s.length * 4 - 1) * sc;
 function shadow(x, cx, cy, rx, ry) {
-  x.fillStyle = 'rgba(10,8,16,.38)';
+  x.fillStyle = hexA(PAL.ink, 0.4);
   for (let d = -ry; d <= ry; d++) { const h = Math.round(rx * Math.sqrt(1 - (d / ry) ** 2)); x.fillRect(cx - h, cy + d, 2 * h, 1); }
 }
 function bar(x, cx, y, w, f, col, ghost = f) {   // f is the real fill, ghost is the pale recent-damage segment behind it
-  R(x, '#1e1b26', cx - w / 2 - 1, y - 1, w + 2, 5); R(x, '#3a3a42', cx - w / 2, y, w, 3);
+  R(x, PAL.ink, cx - w / 2 - 1, y - 1, w + 2, 5); R(x, PAL.coolD, cx - w / 2, y, w, 3);
   const fw = Math.max(f > 0.002 ? 1 : 0, Math.round(w * Math.max(0, Math.min(1, f)))), gw = Math.round(w * Math.max(0, Math.min(1, ghost)));
-  if (gw > fw) R(x, '#ffe9a8', cx - w / 2 + fw, y, gw - fw, 3);
-  R(x, col, cx - w / 2, y, fw, 3); R(x, 'rgba(255,255,255,.35)', cx - w / 2, y, fw, 1);
+  if (gw > fw) R(x, PAL.goldL, cx - w / 2 + fw, y, gw - fw, 3);
+  R(x, col, cx - w / 2, y, fw, 3); R(x, hexA(PAL.white, 0.35), cx - w / 2, y, fw, 1);
 }
 
 /* ---------- live loop ---------- */
 let M = null;
 const PAINT_MS = 1000 / 20 - 2;   // about 20 fps
+const STRIKE_MS = 190, HURT_MS = 140;   // strike frame length after the windup, and how long the hurt frame shows
 const FIGHT = CONFIG.rest * 0.7, KO_AT = FIGHT + 0.15, EASE_MS = 130, GHOST_HOLD = 380, LIFT = { bat: 9, wisp: 6 };   // a lost try: fight for 7 s, hero falls just after, then the rest pause
 export function unmountTower() {
   if (!M) return;
@@ -254,22 +255,21 @@ function sync(m, f, now, dt) {
   while (m.fl < S.foe.length && S.foe[m.fl].t - 0.11 <= p) { if (fx && !stale(S.foe[m.fl].t)) m.fLunge = now; m.fl++; }
   while (m.hi < S.hero.length && S.hero[m.hi].t <= p) {
     const k = S.hero[m.hi++], q = stale(k.t); drop(m.eb, k.d / e.hp, now, q);
-    if (!q) { m.fFlash = now; if (m.floats.length < 10) m.floats.push({ s: fmt(k.d) + (k.c ? '!' : ''), x: FOE[0] + Math.round(Math.random() * 10 - 5), y: FOE[1] - (e.boss ? 46 : 40), t: now, c: k.c ? '#ffd76a' : '#fff', sc: k.c ? 2 : 1 }); }
+    if (!q) { m.fFlash = now; if (m.floats.length < 10) m.floats.push({ s: fmt(k.d) + (k.c ? '!' : ''), x: FOE[0] + Math.round(Math.random() * 10 - 5), y: FOE[1] - (e.boss ? 46 : 40), t: now, c: k.c ? PAL.goldL : PAL.white, sc: k.c ? 2 : 1 }); }
   }
   while (m.fi < S.foe.length && S.foe[m.fi].t <= p) {
     const k = S.foe[m.fi++], q = stale(k.t); drop(m.hb, k.d / h.hp, now, q);
-    if (!q) { m.hFlash = now; if (m.floats.length < 10) m.floats.push({ s: fmt(k.d), x: HERO[0] + Math.round(Math.random() * 8 - 4), y: HERO[1] - 42, t: now, c: '#ffb3a8', sc: 1 }); }
+    if (!q) { m.hFlash = now; if (m.floats.length < 10) m.floats.push({ s: fmt(k.d), x: HERO[0] + Math.round(Math.random() * 8 - 4), y: HERO[1] - 42, t: now, c: PAL.redL, sc: 1 }); }
   }
   if (S.ko !== null && p >= S.ko && !m.down) {   // knocked down
     m.down = fx && p - S.ko < 0.35 ? now : now - 1000; drop(m.hb, 1, now, !fx || p - S.ko > 0.35);
-    if (fx && p - S.ko < 0.35) m.floats.push({ s: 'KO', x: HERO[0], y: HERO[1] - 42, t: now, c: '#ffb3a8', sc: 1 });
+    if (fx && p - S.ko < 0.35) m.floats.push({ s: 'KO', x: HERO[0], y: HERO[1] - 42, t: now, c: PAL.redL, sc: 1 });
   }
   for (const b of [m.eb, m.hb]) {   // the ghost holds a moment after a hit, then catches up
     const cur = shown(b, now, m.rm);
     if (m.rm || now - b.hit > GHOST_HOLD) b.ghost = m.rm ? cur : Math.max(cur, b.ghost - dt * 0.9); else b.ghost = Math.max(b.ghost, cur);
   }
 }
-const ease = (t) => Math.sin(Math.PI * Math.min(1, Math.max(0, t)));
 function flicker(m, now) {
   const a = m.a;
   for (const l of m.scene.lights) { const n = (Math.sin(now / 90 + l.x * 1.7) + Math.sin(now / 53 + l.x * 0.6) + 2) / 4; glow(a, l, 0.02 + 0.13 * n * n); }
@@ -284,23 +284,25 @@ function paint(m, now, dt = 0) {
   const dying = win && p >= f.t, alive = win ? p < f.t + 0.5 : true;
   const spawn = Math.min(1, (now - m.spawnT) / 350), eA = fx ? (dying ? Math.max(0, 1 - (p - f.t) / 0.5) : 1) * spawn : (dying ? 0 : 1);
   const down = !!m.down, walking = win && dying && fx;
-  const bobH = fx && !down ? (walking ? (Math.floor(now / 120) % 2) : (Math.sin(now / 380) > 0.55 ? 1 : 0)) : 0, bobE = fx ? (Math.sin(now / 430 + 1) > 0.55 ? 1 : 0) : 0;
-  const hl = fx ? ease((now - m.hLunge) / 200) : 0, fl = fx ? ease((now - m.fLunge) / 220) : 0;
-  const hs = getSprite('hero', hl > 0.3 ? 'attack' : 'idle'), es = getSprite(kind, 'idle', elite), ep = es.pad || 0;
-  const lift = (LIFT[kind] || 0) + (LIFT[kind] && fx ? Math.round(Math.sin(now / 260) * 2) : 0);
+  const bobH = walking && !down ? (Math.floor(now / 120) % 2) : 0;   // the walk after a kill: a 1 px hop
+  // frames: idle breathes at about 2 fps; each scheduled hit plays windup then strike; being hit shows hurt; KO and death show down. Reduced motion: idle A only, plus down.
+  const idle = fx && Math.floor(now / 500) % 2 ? 'idleB' : 'idleA';
+  const act = (t0, wind) => { const t = now - t0; return !fx || t < 0 ? null : t < wind ? 'windup' : t < wind + STRIKE_MS ? 'strike' : null; };
+  const ha = act(m.hLunge, 100), fa = act(m.fLunge, 110), hHurt = fx && now - m.hFlash < HURT_MS, fHurt = fx && now - m.fFlash < HURT_MS;
+  const hf = down ? 'down' : hHurt ? 'hurt' : walking ? 'idleA' : ha || idle, ef = dying && fx ? 'down' : fHurt ? 'hurt' : fa || idle;
+  const hs = getSprite('hero', hf), es = getSprite(kind, ef, elite), ep = es.pad || 0;
+  const hStep = hf === 'strike' ? 2 : hf === 'windup' ? -1 : 0, fStep = ef === 'strike' ? -2 : ef === 'windup' ? 1 : 0;   // the small step that goes with each frame
+  const lift = dying ? 0 : (LIFT[kind] || 0) + (LIFT[kind] && fx ? Math.round(Math.sin(now / 260) * 2) : 0);
   shadow(a, HERO[0], HERO[1] + 1, 9, 3);
   if (alive && eA > 0) shadow(a, FOE[0], FOE[1] + 1, boss ? 13 : 9, boss ? 4 : 3);
-  const hx = Math.round(HERO[0] - 10 + hl * 7), hy = HERO[1] - hs.h + 3 - bobH, hurt = fx && now - m.hFlash < 80;
-  if (down) {   // lying on the floor, head away from the foe
-    const t = Math.min(1, (now - m.down) / 200);
-    a.save(); a.translate(Math.round(HERO[0] + 3), Math.round(HERO[1] - 6)); a.rotate(-Math.PI / 2 * t); a.globalAlpha = 0.85; a.drawImage(hurt ? hs.flash : hs.img, -hs.w / 2 + 4, -hs.h + 7); a.restore();
-  } else a.drawImage(hurt ? hs.flash : hs.img, hx - 2, hy);
+  const hx = Math.round(HERO[0] - hs.px + hStep), hy = HERO[1] - hs.h + 3 - bobH, hurt = fx && now - m.hFlash < 80;
+  if (down) { a.globalAlpha = 0.85; a.drawImage(hs.img, hx, hy); } else a.drawImage(hurt ? hs.flash : hs.img, hx, hy);
   a.globalAlpha = 1;
-  const ex = Math.round(FOE[0] - es.w / 2 - fl * 6 + (fx && now - m.fFlash < 110 ? 2 : 0)), ey = FOE[1] - es.h + 3 - bobE - lift;
+  const ex = Math.round(FOE[0] - es.px + fStep), ey = FOE[1] - es.h + 3 - lift;
   if (alive && eA > 0) { a.globalAlpha = eA; a.drawImage(fx && now - m.fFlash < 80 ? es.flash : es.img, ex - ep, ey - ep); a.globalAlpha = 1; }
   // bars: they only move on hits
-  if (!down) bar(a, HERO[0], hy - 5, 20, shown(m.hb, now, m.rm), '#62b05c', m.hb.ghost);
-  if (alive && eA > 0.5) bar(a, FOE[0], ey - 5, boss ? 28 : 20, shown(m.eb, now, m.rm), '#c2403f', m.eb.ghost);
+  if (!down) bar(a, HERO[0], hy + hs.top - 5, 20, shown(m.hb, now, m.rm), PAL.greenM, m.hb.ghost);
+  if (alive && eA > 0.5) bar(a, FOE[0], Math.max(4, ey + es.top - 5), boss ? 28 : 20, shown(m.eb, now, m.rm), PAL.redM, m.eb.ghost);
   // floating numbers
   m.floats = m.floats.filter((fo) => now - fo.t < 900);
   for (const fo of m.floats) { const age = (now - fo.t) / 900; a.globalAlpha = age > 0.7 ? 1 - (age - 0.7) / 0.3 : 1; text(a, fo.s, Math.round(fo.x - textW(fo.s, fo.sc) / 2), Math.round(fo.y - 16 * (1 - (1 - age) ** 2)), fo.c, fo.sc); }
@@ -316,6 +318,6 @@ function blit(m) {
   if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
   ctx.imageSmoothingEnabled = false;
   const ox = Math.floor((bw - (AW + 2 * PAD) * s) / 2);
-  ctx.fillStyle = '#1d1d23'; ctx.fillRect(0, 0, bw, bh);
+  ctx.fillStyle = PAL.ink; ctx.fillRect(0, 0, bw, bh);
   ctx.drawImage(m.art, 0, 0, AW + 2 * PAD, AH, ox, 0, (AW + 2 * PAD) * s, bh);
 }

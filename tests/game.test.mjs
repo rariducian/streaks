@@ -494,3 +494,32 @@ test('visual fight: a lost try plays out then the hero falls; the foe keeps some
   assert.deepEqual(V.schedule(f, 30), S);
 });
 const CONFIG30 = (f) => (f.late ? G.CONFIG.bossTimer : f.tDie);
+
+// ---------- sprites: palette, frames, feet ----------
+import * as SP from '../js/game/sprites.js';
+const ALL_KINDS = ['hero', ...ENEMY_KINDS, ...BOSS_KINDS];
+test('palette: 32 colours, none pure black, every sprite and variant pixel resolves into it', () => {
+  const pal = new Set(Object.values(SP.PAL)); assert.equal(pal.size, 32); assert.ok(!pal.has('#000000') && !pal.has('#000'));
+  for (const k of ALL_KINDS) {
+    const roles = SP.paletteFor(k);
+    for (const f of SP.FRAMES) for (const row of SP.MAPS[k][f]) for (const ch of row) if (ch !== '.') assert.ok(pal.has(roles[ch]), `${k}:${f} role ${ch}`);
+  }
+});
+test('sprites: all 23 have the 6 frames at identical size, and no swung weapon is clipped', () => {
+  assert.equal(ALL_KINDS.length, 23);
+  for (const k of ALL_KINDS) {
+    assert.deepEqual(Object.keys(SP.MAPS[k]), SP.FRAMES, k);
+    const { w, h } = SP.META[k];
+    for (const f of SP.FRAMES) { const m = SP.MAPS[k][f]; assert.equal(m.length, h, `${k}:${f} height`); assert.ok(m.every((r) => r.length === w), `${k}:${f} width`); assert.ok(m.some((r) => /[^.]/.test(r)), `${k}:${f} empty`); }
+  }
+  assert.deepEqual(SP.CLIPS, {});
+});
+test('sprites: the feet rows are identical across idle A/B, windup, strike and hurt', () => {
+  for (const k of ALL_KINDS) {
+    const base = SP.MAPS[k].idleA;
+    for (const f of ['idleB', 'windup', 'strike', 'hurt']) for (const r of [2, 1]) assert.equal(SP.MAPS[k][f][base.length - r], base[base.length - r], `${k}:${f} row -${r}`);
+  }
+});
+test('sprites: frames differ where they should (idle B, windup, strike, hurt, down all move)', () => {
+  for (const k of ALL_KINDS) { const m = SP.MAPS[k], j = (f) => m[f].join('/'); for (const f of SP.FRAMES.slice(1)) assert.notEqual(j(f), j('idleA'), `${k}:${f}`); assert.notEqual(j('windup'), j('strike'), k); }
+});

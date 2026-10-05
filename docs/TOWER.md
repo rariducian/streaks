@@ -169,10 +169,11 @@ Bars move only on hits. `schedule()` in view.js turns the sim's closed-form figh
 - **Bosses** (32 x 40, the zone's boss on every 10th floor): Troll King (Cellar, from floor 70), Iron Knight (Barracks), Lich (Library), Death Knight (Crypt, a recolour), Demon Lord (Forge), Frost Dragon (Frost Hall), Sky Dragon (Sky Spire).
 
 ## Sprites
-- Pixel maps stored as code-built string grids with a small palette, shaded and outlined by `finish()`. Enemies are about 24 x 28 and bosses 32 x 40, all in the same 3/4 chibi look, facing left.
-- **Hero:** idle and attack frames. Knocked down is the idle frame rotated.
-- Boss recolours are palette swaps of a base map; the elite outline is drawn on a padded copy.
-- Drawn with the canvas `drawImage` call from small offscreen canvases, scaled by a whole number to the panel.
+- **Palette:** one original 32-colour palette (`PAL` in `sprites.js`), hue-shifted ramps (shadows toward blue/purple, highlights toward yellow) for skin, hair, red cloth, gold, steel, cool and warm stone, wood, green, purple, blue, fire and bone, plus a dark blue-purple ink instead of black. Every sprite, boss recolour, prop, wall, floor and in-canvas UI colour comes from it. Only light and glow overlays (soft alpha tints) blend beyond it.
+- **Maps:** code-built string grids (roles, not colours). `finish()` bevels each fill (shade on the bottom/right, light on the top/left, light from the top left) and outlines selectively: ink on the shadow side, the darkest step of the neighbouring ramp on the lit side.
+- **Frames:** every unit (hero, 15 enemies, 7 bosses) has `idleA`, `idleB`, `windup`, `strike`, `hurt`, `down` at identical size, with the feet rows fixed. Units are drawn as a body grid plus a limb/weapon grid. Idle B bobs everything above a per-unit split row by 1 px. Windup and strike swing the weapon (or reach the arm) about a fixed grip and lean the body above the split; hurt leans away. Down is hand-drawn for the hero and a procedural collapse for the rest. Dev check: `node tools/silhouette-sheet.mjs out.png [--frames]` draws every sprite as a solid shape at two sizes.
+- **View:** idle alternates at about 2 fps; each scheduled hit plays windup then strike with a 1 to 2 px step; being hit shows hurt (with the white flash); a KO or a kill shows down. With reduced motion only idle A (and down) is used.
+- Boss recolours are palette swaps of a base map (the Death Knight has its own shape: spiked crown and a scythe). The elite outline is drawn on a padded copy. Sprites carry a feet pivot (`px`) that the view plants on the ground point.
 
 ## Data
 - Save in `state.game`, created lazily by `ensureGame(state)`.
