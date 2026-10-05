@@ -366,6 +366,31 @@ export function weeklyVolume(state, today, weeks = 8) {
   return out;
 }
 
+// Ladder position per move per week: level index + progress through that level's rep range, plus 1 (level 1 at the bottom = 1.0).
+export function moveTrend(state, today, weeks = 8) {
+  const thisWeek = weekStartOf(today), work = workOf(state);
+  const starts = Array.from({ length: weeks }, (_, i) => addDays(thisWeek, -7 * (weeks - 1 - i)));
+  return Object.values(MOVES).map((m) => {
+    const usable = usableLevelIdx(m.id, state.settings.pullupBar);
+    const points = starts.map((weekStart) => {
+      const weekEnd = addDays(weekStart, 6);
+      let top = -1, best = 0;
+      for (const se of state.sessions) if (se.date >= weekStart && se.date <= weekEnd) for (const x of se.sets) {
+        if (x.moveId !== m.id || x.level == null) continue;
+        if (x.level > top) { top = x.level; best = 0; }
+        if (x.level === top) best = Math.max(best, x.reps || 0);
+      }
+      if (top < 0) return { weekStart, score: null };
+      let idx = usable.indexOf(top);
+      if (idx < 0) idx = Math.max(0, usable.filter((i) => i < top).length - 1);
+      const range = rangeOf(m.id, top, work);
+      const frac = range[1] > range[0] ? clamp((best - range[0]) / (range[1] - range[0]), 0, 1) : 1;
+      return { weekStart, score: idx + frac + 1, idx, frac };
+    });
+    return { moveId: m.id, name: m.name, unit: m.unit, levelsTotal: usable.length, points };
+  });
+}
+
 export function moveProgress(state) {
   return Object.values(MOVES).map((m) => {
     const ms = state.moves[m.id] || defaultMove(m.id);
@@ -377,7 +402,7 @@ export function moveProgress(state) {
     let best = 0;
     for (const se of state.sessions) for (const x of se.sets) if (x.moveId === m.id && x.level === level) best = Math.max(best, x.reps);
     return {
-      moveId: m.id, name: m.name, unit: m.unit, level, levelName: m.levels[level].name,
+      moveId: m.id, name: m.name, unit: m.unit, level, levelName: m.levels[level].name, idx, frac,
       levelsTotal: usable.length, target: clamp(ms.target, range[0], range[1]), range,
       pct: Math.round(clamp(((idx + frac) / usable.length) * 100, 0, 100)), best,
     };

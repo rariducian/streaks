@@ -173,8 +173,17 @@ h2.title .chev{color:var(--muted);font-weight:400;font-size:1.294rem;line-height
 .lvl .nm{font-weight:650}
 .lvl .tg{font-size:0.765rem;color:var(--muted)}
 .lvl .ln{font-size:0.824rem;color:var(--muted);margin:1px 0 8px}
-.bar{height:8px;border-radius:99px;background:var(--track);overflow:hidden}
-.bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#FF9A3C,#EF4036)}
+.ladder{display:flex;gap:3px;height:8px}
+.ladder span{flex:1;border-radius:99px;background:var(--track);overflow:hidden}
+.ladder i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#FF9A3C,#EF4036)}
+.mastered{display:inline-block;font-size:0.647rem;font-weight:700;padding:1px 7px;border-radius:99px;background:var(--pill-g);color:var(--green-text);margin-right:4px}
+.trends{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tcard{background:var(--card);border-radius:18px;padding:12px}
+.tcard .nm{font-weight:650;font-size:0.882rem}
+.tcard .tv{font-size:0.765rem;color:var(--muted);margin:1px 0 6px}
+.tcard svg{display:block;width:100%;height:auto}
+.tcard .muted{font-size:0.765rem}
+@media (max-width:359px){.trends{grid-template-columns:1fr}}
 .feed .ev{display:flex;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line);font-size:0.882rem}
 .feed .ev:last-child{border-bottom:0}
 .feed .bd{flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-size:0.941rem}

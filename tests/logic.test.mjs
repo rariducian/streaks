@@ -431,6 +431,33 @@ test('weeklyVolume reps leave out core seconds', () => {
   assert.deepEqual(L.weeklyVolume(s, '2026-03-12', 1)[0], { weekStart: '2026-03-09', sets: 4, reps: 20 });
 });
 
+test('moveTrend: null for weeks with no sets', () => {
+  const t = L.moveTrend(fresh(), '2026-03-12', 3);
+  assert.deepEqual(t[0].points, [{ weekStart: '2026-02-23', score: null }, { weekStart: '2026-03-02', score: null }, { weekStart: '2026-03-09', score: null }]);
+});
+
+test('moveTrend: highest level that week, best reps at that level', () => {
+  const s = fresh();
+  s.sessions = [{ date: '2026-03-10', sets: [...sets('hpush', 0, 15, 2), ...sets('hpush', 1, 8, 1), { moveId: 'hpush', level: 1, reps: 10 }] }];
+  const [lo, hi] = L.rangeOf('hpush', 1, 40), p = L.moveTrend(s, '2026-03-12', 2).find((x) => x.moveId === 'hpush').points;
+  assert.equal(p[0].score, null);
+  assert.ok(Math.abs(p[1].score - (1 + (10 - lo) / (hi - lo) + 1)) < 1e-9);
+});
+
+test('moveTrend: legacy null-level sets are ignored', () => {
+  const s = fresh();
+  s.sessions = [{ date: '2026-03-10', sets: sets('hpush', null, 12, 3) }, { date: '2026-03-11', sets: sets('hpush', undefined, 12, 1) }];
+  assert.equal(L.moveTrend(s, '2026-03-12', 1).find((x) => x.moveId === 'hpush').points[0].score, null);
+});
+
+test('moveTrend: one entry per move in moveProgress order, weeks oldest first', () => {
+  const s = fresh(), t = L.moveTrend(s, '2026-03-12');
+  assert.deepEqual(t.map((x) => x.moveId), L.moveProgress(s).map((x) => x.moveId));
+  assert.deepEqual(t.map((x) => x.levelsTotal), L.moveProgress(s).map((x) => x.levelsTotal));
+  for (const x of t) { assert.equal(x.points.length, 8); assert.equal(x.points[7].weekStart, '2026-03-09'); }
+  assert.equal(L.moveTrend(s, '2026-03-12', 3)[0].points.length, 3);
+});
+
 test('growthOffer', () => {
   const today = '2026-03-18';
   const five = (ws) => range(ws, 5);

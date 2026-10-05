@@ -3,7 +3,7 @@ import { isGuidePending } from './form/pending.js';
 import {
   todayStr, addDays, defaultState, sessionPlan, placeFromCalibration, applyCalibration, finishSession,
   trainingDates, fastingDates, computeStreak, heatmap, runningFast, startFast, endFast, editFast,
-  deleteFast, fastStage, fastStats, weeklyVolume, moveProgress, recentEvents, growthOffer,
+  deleteFast, fastStage, fastStats, moveTrend, moveProgress, recentEvents, growthOffer,
   acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals
 } from './logic.js';
 import { load, save, exportJSON, importJSON } from './store.js';
@@ -265,14 +265,23 @@ function heatSvg(dates, color, name) {
   });
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${name} calendar for the last ${weeks.length} weeks: ${plural(count, 'day')} ${name === 'Training' ? 'trained' : 'fasted'}. Streak freeze days are light blue.">${out}</svg>`;
 }
-function volumeChart(v) {
-  const W = 340, H = 150, pl = 26, pb = 20, pt = 8, bw = (W - pl) / v.length;
-  const max = Math.max(...v.map((x) => x.reps), 5) * 1.15, y = (n) => pt + (H - pt - pb) * (1 - n / max);
-  const tops = [0, Math.round(max / 2), Math.floor(max)].filter((n, i, a) => a.indexOf(n) === i);
-  const grid = tops.map((n) => `<line x1="${pl}" x2="${W}" y1="${y(n)}" y2="${y(n)}" stroke="var(--line)"/><text x="${pl - 4}" y="${y(n) + 3}" text-anchor="end">${n}</text>`).join('');
-  const bars = v.map((x, i) => { const bx = pl + i * bw + 5, bh = (H - pt - pb) * x.reps / max, d = parseDate(x.weekStart);
-    return `<rect x="${bx}" y="${H - pb - bh}" width="${bw - 10}" height="${Math.max(bh, 1)}" rx="5" fill="url(#vg)"/>${x.reps ? `<text x="${bx + (bw - 10) / 2}" y="${H - pb - bh - 3}" text-anchor="middle" style="fill:var(--text)">${x.reps}</text>` : ''}<text x="${bx + (bw - 10) / 2}" y="${H - 5}" text-anchor="middle">${d.getDate()}/${d.getMonth() + 1}</text>`; }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Reps per week over the last ${v.length} weeks, oldest first: ${v.map((x) => x.reps).join(', ')}. Core time is not included."><defs><linearGradient id="vg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF9A3C"/><stop offset="1" stop-color="#EF4036"/></linearGradient></defs>${grid}${bars}</svg>`;
+// Small line chart per move: ladder position by week. Line breaks at weeks with no sets.
+function trendCard(t) {
+  const last = [...t.points].reverse().find((p) => p.score != null);
+  const head = last ? `Level ${last.idx + 1} of ${t.levelsTotal} &middot; ${Math.round(last.frac * 100)}%` : 'No sets in 8 weeks';
+  const lab = `${t.name} ladder position by week over the last ${t.points.length} weeks, oldest first: ${t.points.map((p) => p.score == null ? 'no sets' : `level ${p.idx + 1} at ${Math.round(p.frac * 100)}%`).join(', ')}.`;
+  // Y axis fits the data (at least 2 levels tall) so small gains still show.
+  const sc = t.points.filter((p) => p.score != null).map((p) => p.score), lo = sc.length ? Math.floor(Math.min(...sc)) : 1, hi = Math.max(lo + 2, Math.ceil(Math.max(...sc, lo)));
+  const W = 160, H = 56, px = 6, py = 6, n = t.points.length;
+  const x = (i) => px + (n > 1 ? i * (W - 2 * px) / (n - 1) : (W - 2 * px) / 2), y = (v) => H - py - (H - 2 * py) * (v - lo) / (hi - lo);
+  let d = '', pen = false, dots = '';
+  t.points.forEach((p, i) => {
+    if (p.score == null) { pen = false; return; }
+    d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)} ${y(p.score).toFixed(1)}`; pen = true;
+    dots += `<circle cx="${x(i).toFixed(1)}" cy="${y(p.score).toFixed(1)}" r="${p === last ? 4 : 2}" fill="var(--orange)"/>`;
+  });
+  const svg = last ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(lab)}"><path d="${d}" fill="none" stroke="var(--orange)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>${dots}</svg>` : '<div class="muted">No sets in 8 weeks</div>';
+  return `<div class="tcard"><div class="nm">${esc(t.name)}</div><div class="tv tnum">${last ? head : '&nbsp;'}</div>${svg}</div>`;
 }
 function evLabel(e) {
   const n = moveName(e.moveId), lv = levelName(e);
@@ -309,20 +318,16 @@ function repCard(today) {
   return `<div class="section"><h2 class="title">Rep totals</h2><div class="reps"><p class="rt-head tnum">${head}</p>
     <div class="seg" role="radiogroup" aria-label="Rep totals period">${seg}</div>${rows}<p class="rt-note">Both sides counted. Core shows time held.</p></div></div>`;
 }
+// Segmented ladder: done steps full, current step part filled, the rest empty.
+const ladder = (m) => Array.from({ length: m.levelsTotal }, (_, i) => `<span><i style="width:${i < m.idx ? 100 : i === m.idx ? Math.round(m.frac * 100) : 0}%"></i></span>`).join('');
 function viewFitness() {
   const mp = moveProgress(state), today = todayStr();
   const done = computeStreak(trainingDates(state), today).doneToday;
-  const vol = weeklyVolume(state, today, 8), cur = vol[vol.length - 1].reps, prev = vol.length > 1 ? vol[vol.length - 2].reps : 0;
-  const diff = cur - prev;
-  const vsum = !cur && !prev ? 'No reps logged this week or last week.'
-    : !cur ? `No reps yet this week. Last week you did ${plural(prev, 'rep')}.`
-    : !prev ? `${plural(cur, 'rep')} this week, none last week.`
-    : `${plural(cur, 'rep')} this week, ${diff === 0 ? 'the same as last week' : `${Math.abs(diff)} ${diff > 0 ? 'more' : 'fewer'} than last week`}.`;
   return `${sessionHero(done)}<div class="section"><h2 class="title">Levels</h2>
-    ${mp.map((m) => `<div class="lvl${lvlAttrs(m)}><div class="top"><span class="nm">${esc(m.name)}</span><span class="tg">Target ${m.target}/${m.range[1]}${m.unit === 'sec' ? 's' : ''}</span></div>
-    <div class="ln">Level ${m.level + 1} of ${m.levelsTotal} &middot; ${esc(m.levelName)}${m.best ? ` &middot; best ${m.best}` : ''}</div><div class="bar"><i style="width:${Math.max(3, Math.min(100, m.pct))}%"></i></div></div>`).join('')}</div>
+    ${mp.map((m) => `<div class="lvl${lvlAttrs(m)}><div class="top"><span class="nm">${esc(m.name)}</span><span class="tg">${m.idx === m.levelsTotal - 1 && m.frac === 1 ? '<span class="mastered">Mastered</span> ' : ''}Target ${m.target}/${m.range[1]}${m.unit === 'sec' ? 's' : ''}</span></div>
+    <div class="ln">Level ${m.level + 1} of ${m.levelsTotal} &middot; ${esc(m.levelName)}${m.best ? ` &middot; best ${m.best}` : ''}</div><div class="ladder" aria-hidden="true">${ladder(m)}</div></div>`).join('')}</div>
   ${repCard(today)}
-  <div class="section"><h2 class="title">Weekly volume</h2><p class="chartsum">${vsum} Core time is not included.</p><div class="chart">${volumeChart(vol)}</div></div>`;
+  <div class="section"><h2 class="title">Progress by move</h2><p class="chartsum">Your place on each ladder. Steps up are level-ups.</p><div class="trends">${moveTrend(state, today, 8).map(trendCard).join('')}</div></div>`;
 }
 function viewProgress() {
   const today = todayStr();
