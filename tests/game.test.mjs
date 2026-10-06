@@ -523,3 +523,122 @@ test('sprites: the feet rows are identical across idle A/B, windup, strike and h
 test('sprites: frames differ where they should (idle B, windup, strike, hurt, down all move)', () => {
   for (const k of ALL_KINDS) { const m = SP.MAPS[k], j = (f) => m[f].join('/'); for (const f of SP.FRAMES.slice(1)) assert.notEqual(j(f), j('idleA'), `${k}:${f}`); assert.notEqual(j('windup'), j('strike'), k); }
 });
+
+// ---------- looks, paper doll, inventory ----------
+const TIERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15], SLOT_STYLES = { weapon: ['sword', 'longsword', 'axe', 'spear', 'greatsword'], armour: ['tunic', 'vest', 'chain', 'plate', 'cape'], boots: ['cloth', 'leather', 'iron'] };
+const ALL_LOOKS = Object.entries(SLOT_STYLES).flatMap(([s, l]) => l.flatMap((st) => G.RARITIES.map((r) => `${s}.${st}.${r}`)));
+test('look: derived from slot, tier and rarity, same every time, and every tier band and rarity is covered', () => {
+  const seen = { weapon: new Set(), armour: new Set(), boots: new Set() };
+  for (const slot of G.SLOTS) for (const tier of TIERS) for (const rarity of G.RARITIES) {
+    const a = G.lookOf({ slot, tier, rarity }), b = G.lookOf({ slot, tier, rarity, bonus: 9, lvl: 3, id: 1 }); assert.equal(a, b); assert.match(a, new RegExp(`^${slot}\\.\\w+\\.${rarity}$`)); seen[slot].add(a.split('.')[1]);
+  }
+  for (const s of G.SLOTS) assert.deepEqual([...seen[s]].sort(), SLOT_STYLES[s].slice().sort(), s);
+  const w = (t) => G.lookOf({ slot: 'weapon', tier: t, rarity: 'common' }).split('.')[1], a = (t) => G.lookOf({ slot: 'armour', tier: t, rarity: 'epic' }).split('.')[1], bt = (t) => G.lookOf({ slot: 'boots', tier: t, rarity: 'rare' }).split('.')[1];
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 40].map(w), ['sword', 'sword', 'longsword', 'longsword', 'axe', 'axe', 'spear', 'spear', 'greatsword', 'greatsword', 'greatsword']);
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(a), ['tunic', 'tunic', 'vest', 'vest', 'chain', 'chain', 'plate', 'plate', 'cape', 'cape']);
+  assert.deepEqual([1, 3, 4, 6, 7, 12].map(bt), ['cloth', 'cloth', 'leather', 'leather', 'iron', 'iron']);
+});
+test('look: drops carry it, old items get it on load, a rarity upgrade changes it, the stash and drop log keep it', () => {
+  const d = G.rollDrop(game(), 85, seq(0.1, 0.99, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5)); assert.equal(d.look, G.lookOf(d));
+  const old = fresh(); old.game = { gear: { weapon: { slot: 'weapon', tier: 6, rarity: 'rare', bonus: 0.45 } }, stash: [{ slot: 'boots', tier: 9, rarity: 'epic', bonus: 1 }] };
+  const g = G.ensureGame(old); assert.equal(g.gear.weapon.look, 'weapon.axe.rare'); assert.equal(g.stash[0].look, 'boots.iron.epic'); assert.equal(g.gear.weapon.bonus, 0.45);
+  const g2 = game({ focus: 9999 }); const it = wear(g2, 'armour', { ...item('armour', 4, 'common'), look: 'armour.vest.common' }); assert.equal(G.forge(g2, 'armour', 'upgrade', 0, seq(0.5)), true); assert.equal(it.look, 'armour.vest.rare');
+  const g3 = game(); const rec = G.giveDrop(g3, { ...item('weapon', 7, 'epic'), look: undefined }); assert.equal(rec.look, 'weapon.spear.epic'); assert.equal(g3.gear.weapon.look, 'weapon.spear.epic');
+});
+test('paper doll: every overlay has the 6 frames at the hero size, nothing clipped, and the hand sits on the same grip for every weapon', () => {
+  const { w, h } = SP.META.hero;
+  for (const look of ALL_LOOKS) for (const f of SP.FRAMES) {
+    const m = SP.overlayFrame(look, f); assert.equal(m.length, h, `${look}:${f}`); assert.ok(m.every((r) => r.length === w), `${look}:${f} width`); assert.ok(m.some((r) => /[^.]/.test(r)), `${look}:${f} empty`);
+  }
+  assert.deepEqual(SP.CLIPS, {});
+  const hand = (m) => m.flatMap((r, y) => [...r].map((c, x) => (c === 's' ? `${x},${y}` : null))).filter(Boolean).join(' ');
+  for (const f of SP.FRAMES.slice(0, 5)) { const g0 = hand(SP.overlayFrame('weapon.sword.common', f)); assert.ok(g0, f); for (const look of ALL_LOOKS.filter((l) => l.startsWith('weapon'))) assert.equal(hand(SP.overlayFrame(look, f)), g0, `${look}:${f}`); }
+  for (const look of ALL_LOOKS.filter((l) => !l.startsWith('weapon'))) assert.equal(hand(SP.overlayFrame(look, 'idleA')), '', look);   // armour and boots never draw the hand, so the weapon owns the grip
+});
+test('paper doll: every outfit keeps the hero size, the feet rows and the idle bob, and the empty outfit is the plain hero', () => {
+  const outfits = [[], ['weapon.sword.common', 'armour.tunic.common', 'boots.cloth.common'], ['weapon.axe.rare', 'armour.chain.rare', 'boots.leather.rare'], ['weapon.spear.epic', 'armour.plate.epic', 'boots.iron.epic'], ['weapon.greatsword.epic', 'armour.cape.epic', 'boots.iron.epic'], ['', 'armour.cape.rare', '']];
+  for (const o of outfits) {
+    const m = SP.heroMaps(o), { w, h } = SP.META.hero; assert.deepEqual(Object.keys(m), SP.FRAMES);
+    for (const f of SP.FRAMES) { assert.equal(m[f].length, h); assert.ok(m[f].every((r) => r.length === w), `${o}:${f}`); }
+    for (const f of ['idleB', 'windup', 'strike', 'hurt']) for (const r of [1, 2]) assert.equal(m[f][h - r], m.idleA[h - r], `${o}:${f} feet row -${r}`);
+    for (const f of SP.FRAMES.slice(1)) assert.notEqual(m[f].join('/'), m.idleA.join('/'), `${o}:${f}`);
+    assert.notEqual(m.idleB.slice(0, 19).join('/'), m.idleA.slice(0, 19).join('/'), 'the idle bob moves the body above the split');
+  }
+  assert.deepEqual(SP.heroMaps([]), SP.MAPS.hero); assert.deepEqual(SP.heroMaps(['', '', '']), SP.MAPS.hero);
+  assert.notEqual(SP.heroMap('idleA', outfits[1]).join('/'), SP.heroMap('idleA', outfits[2]).join('/'));
+  assert.equal(SP.heroMap('idleA', outfits[3]), SP.heroMap('idleA', outfits[3].slice()), 'cached by equipment signature');
+  assert.equal(SP.heroSig(outfits[3]), 'weapon.spear.epic|armour.plate.epic|boots.iron.epic'); assert.equal(SP.heroSig({ armour: 'armour.tunic.rare' }), '-|armour.tunic.rare|-');
+  assert.deepEqual(SP.CLIPS, {});
+});
+test('paper doll: every overlay, outfit and icon pixel is in the palette', () => {
+  const pal = new Set(Object.values(SP.PAL)), roles = SP.paletteFor('hero'), ok = (rows, tag) => { for (const row of rows) for (const ch of row) if (ch !== '.') assert.ok(pal.has(roles[ch]), `${tag} role ${ch}`); };
+  for (const look of ALL_LOOKS) { for (const f of SP.FRAMES) ok(SP.overlayFrame(look, f), `${look}:${f}`); ok(SP.iconMap(look), `${look} icon`); const ic = SP.iconInfo(look); assert.ok(ic.w > 3 && ic.h > 3 && ic.s >= 2, look); }
+  for (const w of SLOT_STYLES.weapon) for (const a of SLOT_STYLES.armour) for (const r of G.RARITIES) for (const f of SP.FRAMES) ok(SP.heroMap(f, [`weapon.${w}.${r}`, `armour.${a}.${r}`, `boots.${SLOT_STYLES.boots[SLOT_STYLES.weapon.indexOf(w) % 3]}.${r}`]), `${w}/${a}/${r}:${f}`);
+  assert.equal(SP.parseLook('weapon.nope.rare'), null); assert.equal(SP.parseLook('boots.iron.legendary'), null); assert.equal(SP.overlayFrame('junk', 'idleA'), null);
+});
+
+const invGame = () => {
+  const g = game({ stats: { atk: 4, hp: 4, spd: 4 } });
+  wear(g, 'weapon', item('weapon', 3, 'rare', [{ id: 'lifesteal', v: 0.08 }])); wear(g, 'armour', item('armour', 2, 'common'));
+  const add = (slot, tier, rarity, aff = [], extra = {}) => { const it = { id: ++g.seq, ...item(slot, tier, rarity, aff, extra) }; g.stash.push(it); return it; };
+  return { g, add };
+};
+test('inventory: lists equipped then stash, filters by slot, sorts by power, rarity and newest', () => {
+  const { g, add } = invGame(); const a = add('weapon', 8, 'epic', [{ id: 'guard', v: 0.06 }]), b = add('boots', 5, 'common'), c = add('armour', 5, 'rare'), d = add('weapon', 1, 'common');
+  const ids = (l) => l.map((x) => x.it.id);
+  assert.equal(G.inventory(g).length, 6); assert.deepEqual(G.inventory(g).filter((x) => x.equipped).map((x) => x.it.slot).sort(), ['armour', 'weapon']);
+  assert.deepEqual(G.inventory(g, 'weapon').map((x) => x.it.slot), ['weapon', 'weapon', 'weapon']);
+  assert.deepEqual(ids(G.inventory(g, 'all', 'power')), ids(G.inventory(g).slice().sort((x, y) => G.power(y.it) - G.power(x.it))));
+  assert.equal(G.inventory(g, 'all', 'power')[0].it.id, a.id);
+  const r = G.inventory(g, 'all', 'rarity').map((x) => x.it.rarity); assert.deepEqual(r, [...r].sort((x, y) => G.RARITIES.indexOf(y) - G.RARITIES.indexOf(x)));
+  assert.deepEqual(ids(G.inventory(g, 'all', 'newest')), ids(G.inventory(g)).slice().sort((x, y) => y - x)); assert.equal(G.inventory(g, 'all', 'newest')[0].it.id, d.id);
+  assert.deepEqual(G.inventory(g, 'boots').map((x) => x.it.id), [b.id]); assert.ok(c);
+});
+test('inventory: equip swaps gear and stash exactly, keeps counts, refuses a locked slot, and a try-on changes only the preview looks', () => {
+  const { g, add } = invGame(); const a = add('weapon', 8, 'epic'), cur = g.gear.weapon, other = add('boots', 4, 'rare'), n = g.stash.length;
+  assert.deepEqual(V.gearLooks(g), ['weapon.longsword.rare', 'armour.tunic.common', '']);
+  assert.deepEqual(V.gearLooks(g, a), ['weapon.spear.epic', 'armour.tunic.common', '']); assert.equal(g.gear.weapon, cur, 'try-on does not touch the save');
+  assert.equal(G.equip(g, a.id), true); assert.equal(g.gear.weapon, a); assert.equal(g.stash.length, n); assert.ok(g.stash.includes(cur) && !g.stash.includes(a));
+  assert.deepEqual(V.gearLooks(g), ['weapon.spear.epic', 'armour.tunic.common', '']);
+  assert.equal(G.equip(g, other.id), true); assert.equal(g.gear.boots, other); assert.equal(g.stash.length, n - 1, 'an empty slot takes the item without a swap');
+  assert.equal(G.toggleLock(g, a.id), true); assert.equal(G.equip(g, cur.id), false); assert.equal(g.gear.weapon, a, 'a locked equipped item is not swapped out');
+  assert.equal(G.equip(g, 9999), false); assert.equal(G.equip(g, a.id), false, 'an equipped item is not in the stash');
+});
+test('inventory: compare gives the power and stat change against the equipped item (and against an empty slot)', () => {
+  const { g, add } = invGame(); const up = add('weapon', 8, 'epic', [{ id: 'swift', v: 0.06 }]), down = add('weapon', 1, 'common'), boots = add('boots', 3, 'rare');
+  const cu = G.compareItem(g, up), cd = G.compareItem(g, down), cb = G.compareItem(g, boots), cs = G.compareItem(g, g.gear.weapon);
+  assert.equal(cu.stat, 'atk'); assert.ok(cu.dPower > 0 && cu.dStat > 0); close(cu.dPower, Math.round((G.power(up) - G.power(g.gear.weapon)) * 10) / 10, 1e-9); close(cu.after - cu.before, cu.dStat);
+  close(cu.after, G.heroStats({ ...g, gear: { ...g.gear, weapon: up } }).atk); close(cu.before, G.heroStats(g).atk);
+  assert.ok(cd.dPower < 0 && cd.dStat < 0, 'a worse item shows red');
+  assert.equal(cb.cur, null); assert.equal(cb.stat, 'spd'); close(cb.dPower, G.power(boots), 0.1); assert.ok(cb.dStat > 0); close(cb.before, G.heroStats(g).spd);
+  assert.equal(cs.same, true); assert.equal(cs.dPower, 0); assert.equal(cs.dStat, 0);
+  const g2 = structuredClone(g); G.compareItem(g2, up); assert.deepEqual(g2, g, 'compare never mutates the game');
+  const html = V.cmpHtml(g, { sel: up.id, msg: '' }); assert.match(html, /inv-d up/); assert.match(html, /up \d/); assert.match(V.cmpHtml(g, { sel: down.id, msg: '' }), /inv-d dn/); assert.match(V.cmpHtml(g, { sel: boots.id, msg: '' }), /slot is empty/); assert.match(V.cmpHtml(g, { sel: null, msg: 'Equipped.' }), /Tap an item/);
+});
+test('inventory view: every tile and button has an aria-label, tiles read like "Tier 5 epic axe, power 120, equipped, locked", the compare panel is a live region', () => {
+  const { g, add } = invGame(); wear(g, 'boots', item('boots', 9, 'epic', [{ id: 'swift', v: 0.06 }])); g.gear.boots.look = G.lookOf(g.gear.boots); g.gear.boots.lock = true;
+  const ax = add('weapon', 5, 'epic', [{ id: 'boss', v: 0.15 }]), sw = add('weapon', 1, 'common', [], { lock: true }); add('armour', 9, 'rare'); add('armour', 7, 'common');
+  for (const ui of [V.newInv(), { ...V.newInv('weapon'), sort: 'newest', sel: ax.id }, { ...V.newInv('boots'), sort: 'rarity', sel: g.gear.boots.id }, { ...V.newInv(), sel: sw.id, msg: 'Locked.' }]) {
+    const { title, body } = V.invSheet(g, ui); assert.equal(title, 'Inventory');
+    const btns = body.match(/<button[^>]*>/g) || [], sels = body.match(/<select[^>]*>/g) || [], cv = body.match(/<canvas[^>]*>/g) || [];
+    assert.ok(btns.length >= 7 + G.inventory(g, ui.slot).length); assert.ok(btns.every((b) => /aria-label="[^"]+"/.test(b)), btns.find((b) => !/aria-label="[^"]+"/.test(b)));
+    assert.ok(sels.length === 1 && /aria-label="[^"]+"/.test(sels[0])); assert.ok(cv.length === 1 && /role="img"/.test(cv[0]) && /aria-label="Your hero wearing/.test(cv[0]));
+    assert.match(body, /id="inv-cmp" role="status" aria-live="polite"/); assert.equal((body.match(/class="inv-tile/g) || []).length, G.inventory(g, ui.slot).length);
+    assert.equal((body.match(/role="tab"/g) || []).length, 4); assert.equal((body.match(/aria-selected="true"/g) || []).length, 1);
+  }
+  const body = V.invSheet(g, V.newInv()).body, labels = [...body.matchAll(/class="inv-tile[^"]*"[^>]*aria-label="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(labels.includes(`Tier 5 epic axe, power ${Math.round(G.power(ax) * 10) / 10}`)); assert.ok(labels.includes(`Tier 1 common short sword, power ${Math.round(G.power(sw) * 10) / 10}, locked`));
+  assert.ok(labels.some((l) => /^Tier 9 epic iron greaves, power [\d.]+, equipped, locked$/.test(l))); assert.ok(labels.some((l) => /^Tier 2 common tunic, power [\d.]+, equipped$/.test(l)));
+  assert.equal(V.tileLabel({ ...ax, lvl: 2 }, false).includes('+2'), true);
+  const acts = V.invActs(g, { sel: ax.id }); assert.deepEqual(acts.map((a) => a.k), ['invEquip', 'invLock', 'invForge']); assert.ok(acts.every((a) => a.label.length > 6) && acts.every((a) => !a.off));
+  g.gear.weapon.lock = true; assert.equal(V.invActs(g, { sel: ax.id })[0].off, true); assert.match(V.invActs(g, { sel: ax.id })[0].label, /locked/);
+  assert.ok(V.invActs(g, { sel: null }).every((a) => a.off && /Select an item first/.test(a.label)));
+  assert.match(V.gearHtml(g), /data-act="invSheet" aria-label="Open inventory: \d+ items/);
+  assert.match(V.gearSheet(g, 'weapon', '', ax.id).body, /data-id="\d+" data-i="0"|data-fa="temper" data-id=/); assert.match(V.gearSheet(g, 'weapon', '', ax.id).body, /in the stash/);
+});
+test('forge works on a stashed item (the inventory forge), and only changes stats when it is equipped', () => {
+  const { g, add } = invGame(); g.focus = 5000; const it = add('weapon', 5, 'common', [{ id: 'swift', v: 0.06 }]), before = G.heroStats(g).atk;
+  assert.equal(G.forge(g, 'weapon', 'temper', 0, Math.random, it), true); assert.equal(it.lvl, 1); assert.equal(G.heroStats(g).atk, before); assert.equal(g.gear.weapon.lvl, 0);
+  assert.equal(G.forge(g, 'weapon', 'upgrade', 0, seq(0.5), it), true); assert.equal(it.rarity, 'rare'); assert.equal(it.look, 'weapon.axe.rare');
+  const sh = V.gearSheet(g, 'weapon', '', it.id); assert.equal(sh.title, 'Weapon'); const btns = sh.body.match(/<button[^>]*>/g); assert.ok(btns.every((b) => /aria-label="[^"]+"/.test(b)));
+});

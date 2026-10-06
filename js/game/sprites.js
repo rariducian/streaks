@@ -108,8 +108,10 @@ function finish(g, thick = false) {
 
 /* ---- the units. Each def: size, ox (left room for a swung weapon), dir (facing), split (row the idle bob and lean pivot on), draw(body, limb, pose) ----
    pose: { n: 'idle'|'windup'|'strike'|'hurt', alt: idle frame B, I: index into per-pose arrays }. */
+const GRIPS = [[18, 18, 8], [18, 12, -22], [18, 15, 86], [16, 20, -40]];   // the hero's hand and sword angle per pose: idle, windup, strike, hurt. Every weapon overlay shares these, so swapping weapons never moves the hand
 const HERO = {
   w: 32, h: 28, px: 12, dir: 1, split: 19, lean: [1, 2, 2],
+  // the bare base: legs, simple shoes, red tunic, head and the sleeve. Weapon, armour and boots are overlays on top (see "the hero paper doll" below)
   draw(b, l, P) {
     const X = 4, hurt = P.n === 'hurt';
     rect(b, X + 2, 21, 3, 6, 'n'); rect(b, X + 7, 21, 3, 6, 'n');           // legs
@@ -123,18 +125,15 @@ const HERO = {
     for (const ex of [X + 8, X + 11]) { if (hurt) { px(b, ex, 10, 'k'); px(b, ex + 1, 10, 'k'); } else { px(b, ex, 9, 'k'); px(b, ex, 10, 'k'); } }   // eyes (squeezed shut when hurt)
     if (hurt) { px(b, X + 10, 13, 'k'); px(b, X + 11, 13, 'k'); } else { px(b, X + 10, 13, 'S'); px(b, X + 11, 13, 'S'); }   // mouth
     px(b, X + 7, 12, 'q');                                                    // blush
-    const [gx, gy, A] = [[18, 18, 8], [18, 12, -22], [18, 15, 86], [16, 20, -40]][P.I];   // the grip: hand and sword
+    const [gx, gy] = GRIPS[P.I];
     stripe(l, X + 10, 15, gx - 1, gy - 1, ['r', 'r']);                        // sleeve from the shoulder
-    shaft(l, gx, gy, A, 1, -2, 0, ['n']); shaft(l, gx, gy, A, 1, 3, 12, ['W', 'e']); guard(l, gx, gy, A, 1, 2, 2, 'o');   // pommel, blade, crossguard
-    rect(l, gx - 1, gy - 1, 2, 2, 's');                                       // hand
   },
-  down(b) {   // lying on the back, head away from the foe, sword dropped
+  down(b) {   // lying on the back, head away from the foe
     ell(b, 7, 21.5, 5.5, 5.5, 's'); ell(b, 4.5, 22, 3.6, 5, 'h'); ell(b, 7, 18.5, 5.5, 3, 'h', (x, y) => y <= 19);
     px(b, 9, 21, 'k'); px(b, 10, 21, 'k'); px(b, 12, 21, 'k'); px(b, 13, 21, 'k'); px(b, 11, 24, 'S'); px(b, 12, 24, 'S');
     rect(b, 12, 19, 10, 8, 'r'); rect(b, 17, 19, 1, 8, 'o'); rect(b, 13, 20, 8, 1, 'o');   // tunic, belt
     rect(b, 14, 22, 4, 2, 's'); rect(b, 22, 22, 5, 5, 'n'); rect(b, 27, 21, 3, 6, 'N');
     rect(b, 12, 26, 18, 1, 'N');
-    rect(b, 1, 25, 1, 1, 'e'); line(b, 1, 25, 5, 25, 'e');
   }
 };
 const slime = {
@@ -438,29 +437,183 @@ const dragon = {
     stripe(l, 11, 27, cx + 2, cy, ['g', 'g']); rect(l, cx, cy, 4, 3, 'g'); for (const x of [cx, cx + 2]) px(l, x, cy + 3, 'w');
   }
 };
+/* ---- the hero paper doll: base body + boots + armour + weapon overlays, composited per frame ----
+   A look is 'slot.style.rarity' (engine.js lookOf). Each overlay draws into three grids the size of the hero: k behind the body (a cape), b on the body, l on the arm and weapon.
+   They are posed with the same move() rules as the base, so a weapon follows the grip (GRIPS) and armour follows the idle bob, and boots stay on the ground.
+   Stack, back to front: cape, base body, base sleeve, boots, armour, armour sleeve, weapon and hand. One finish() over the stack gives the shared outline.
+   One pixel features use flat roles (no bevel entry in SHADE), or the bevel would turn them into their shade: x gold, Y light gold, v light purple, l blue, U light blue, f light steel, B and K stone. */
+const RAR = { common: { t: 'K', h: 'B', g: 'E' }, rare: { t: 'l', h: 'U', g: 'l' }, epic: { t: 'x', h: 'Y', g: 'x' } };   // trim, trim highlight and weapon guard colour per rarity
+const hand = (l, gx, gy) => rect(l, gx - 1, gy - 1, 2, 2, 's');
+// a weapon drawn along its grip: S shaft, Gd guard bar, P one pixel (along, across)
+const wpn = (l, gx, gy, A) => { const G = frameOf(A, 1); return { S: (f, t, cols) => shaft(l, gx, gy, A, 1, f, t, cols), Gd: (a, h, c) => guard(l, gx, gy, A, 1, a, h, c), P: (a, s, c) => { const [x, y] = at(G, gx, gy, a, s); px(l, x, y, c); } }; };
+const WEAPON = {
+  bare(w) { w.S(-2, 0, ['n']); w.S(3, 12, ['W', 'e']); w.Gd(2, 2, 'o'); },   // the starter blade, as the hero always had it
+  sword(w, c) {
+    w.S(-3, 0, ['n']); w.S(3, 12, ['W', 'e']); w.Gd(2, 3, RAR[c].g);
+    if (c === 'rare') { w.P(6, 0, 'U'); w.P(10, 0, 'U'); w.P(-3, 0, 'l'); } if (c === 'epic') { w.P(2, 0, 'v'); w.P(8, 1, 'v'); w.P(-3, 0, 'x'); w.P(-2, 0, 'Y'); }
+  },
+  longsword(w, c) {
+    w.S(-3, 0, ['n']); w.S(3, 12, ['W', 'e', 'E']); w.P(13, 0, 'W'); w.Gd(2, 4, RAR[c].g); w.Gd(3, 3, c === 'common' ? 'A' : RAR[c].t);
+    if (c === 'rare') { w.P(6, 0, 'U'); w.P(10, 0, 'U'); w.P(-3, 0, 'l'); } if (c === 'epic') { w.P(2, 0, 'v'); w.P(8, 1, 'v'); w.P(-3, 0, 'x'); w.P(-2, 0, 'Y'); w.P(5, 0, 'v'); }
+  },
+  axe(w, c) {
+    w.S(-3, 11, ['n', 'm']);
+    for (let t = 6; t <= 12; t++) { const e = t === 6 || t === 12 ? 3 : t === 7 || t === 11 ? 4 : 5; for (let s = 2; s <= e; s++) w.P(t, s, s === e ? (c === 'rare' ? 'U' : 'W') : s === 2 ? 'E' : 'e'); }
+    w.P(8, -1, 'E'); w.P(9, -1, 'E'); w.P(9, -2, 'E');
+    if (c === 'rare') { w.P(9, 3, 'U'); } if (c === 'epic') { w.Gd(5, 1, 'x'); w.P(9, 3, 'v'); w.P(-3, 0, 'x'); }
+  },
+  spear(w, c) {
+    w.S(-4, 10, ['n', 'm']);
+    w.Gd(9, 2, c === 'common' ? 'E' : RAR[c].t);
+    for (const [t, a, b] of [[10, -1, 2], [11, -1, 2], [12, 0, 1]]) for (let s = a; s <= b; s++) w.P(t, s, s <= 0 ? 'W' : 'e');
+    w.P(13, 0, 'W');
+    if (c === 'rare') { w.P(11, 0, 'U'); } if (c === 'epic') { w.P(11, 0, 'v'); w.P(-4, 0, 'x'); w.P(5, 0, 'x'); }
+  },
+  greatsword(w, c) {
+    w.S(-4, 0, ['n', 'n']); w.S(3, 12, ['W', 'e', 'e', 'E']); w.P(13, 1, 'W'); w.P(13, 0, 'W'); w.Gd(2, 5, RAR[c].g); w.Gd(3, 4, c === 'common' ? 'A' : c === 'rare' ? 'L' : 'O');
+    if (c === 'rare') { w.P(5, 1, 'U'); w.P(8, 1, 'U'); w.P(11, 1, 'U'); w.P(-4, 0, 'l'); w.P(-4, 1, 'l'); } if (c === 'epic') { w.P(2, 0, 'v'); w.P(6, 1, 'v'); w.P(10, 1, 'v'); w.P(-4, 0, 'x'); w.P(-4, 1, 'x'); w.P(2, 1, 'Y'); w.P(7, 2, 'v'); }
+  }
+};
+const DROPPED = { sword: 5, longsword: 7, axe: 7, spear: 9, greatsword: 9 };   // the weapon on the ground when the hero is down
+// armour pieces. s is the style, c the rarity colours.
+function torso(b, fill) { rect(b, 4, 14, 11, 8, fill); rect(b, 2, 15, 3, 3, fill); }   // the base tunic's footprint, and the back sleeve
+const plateBody = (b, l, k, P, c, cape) => {
+  const T = RAR[c];
+  torso(b, 'e'); rect(b, 5, 15, 3, 4, 'W'); rect(b, 4, 17, 11, 1, 'E'); rect(b, 4, 21, 11, 1, 'E'); rect(b, 4, 19, 11, 1, 'n'); rect(b, 8, 19, 3, 1, T.t);   // plate, light panel, plate lines, belt and buckle
+  rect(b, 5, 14, 9, 1, T.t); ell(b, 14, 15, 2.6, 2.4, 'e'); ell(b, 3, 15.5, 2.2, 2.2, 'e'); rect(b, 12, 13, 4, 1, T.t); rect(b, 1, 14, 3, 1, T.t);   // collar trim, pauldrons and their trim
+  if (!P.ic) stripe(l, 14, 15, GRIPS[P.I][0] - 1, GRIPS[P.I][1] - 1, ['e', 'E']);
+  // helmet: dome, back guard, nose guard, crest. The face (x 11 to 16, y 8 to 13) stays clear.
+  ell(b, 9.5, 6, 7.2, 5.2, 'e', (x, y) => y <= 7); rect(b, 3, 7, 8, 1, 'E'); ell(b, 5.5, 10.5, 3, 4.2, 'E'); rect(b, 13, 7, 2, 4, 'E'); rect(b, 14, 7, 3, 1, 'E'); px(b, 16, 8, 'E');
+  rect(b, 8, 2, 4, 1, 'W'); if (c !== 'common') { rect(b, 8, 0, 3, 2, T.t); px(b, 8, 0, T.h); } else rect(b, 8, 1, 3, 1, 'E');
+  if (cape) { for (let y = 15; y < 27; y++) { const d = Math.floor((y - 15) / 3); rect(k, 0 + d, y, 5 - d, 1, y > 22 ? 'R' : 'r'); } if (c === 'epic') { rect(k, 0, 15, 5, 1, 'x'); for (let y = 15; y < 27; y++) px(k, Math.floor((y - 15) / 3), y, 'x'); } else if (c === 'rare') { for (let y = 15; y < 27; y++) px(k, Math.floor((y - 15) / 3), y, 'l'); } }
+};
+const ARMOUR = {
+  tunic(b, l, k, P, c) {
+    const T = RAR[c]; torso(b, 'g'); rect(b, 4, 19, 11, 1, 'n'); rect(b, 5, 14, 9, 1, T.t); rect(b, 4, 21, 11, 1, T.t);
+    if (!P.ic) stripe(l, 14, 15, GRIPS[P.I][0] - 1, GRIPS[P.I][1] - 1, ['g', 'g']);
+  },
+  vest(b, l, k, P, c) {
+    const T = RAR[c]; rect(b, 4, 14, 11, 8, 'n'); rect(b, 9, 15, 1, 5, 'm'); for (const y of [16, 18]) { px(b, 8, y, 'm'); px(b, 10, y, 'm'); }
+    rect(b, 4, 19, 11, 1, 'N'); rect(b, 4, 21, 11, 1, 'N'); rect(b, 5, 14, 3, 1, 'r'); rect(b, 11, 14, 3, 1, 'r'); rect(b, 5, 20, 2, 1, T.t); rect(b, 12, 20, 2, 1, T.t); rect(b, 2, 15, 3, 3, 'r');   // red shirt shows at the neck and sleeves
+    if (!P.ic) stripe(l, 14, 15, GRIPS[P.I][0] - 1, GRIPS[P.I][1] - 1, ['r', 'r']);
+    if (c === 'epic') px(b, 9, 14, 'Y'); if (c === 'rare') px(b, 9, 14, 'U');
+  },
+  chain(b, l, k, P, c) {
+    const T = RAR[c]; for (let y = 14; y < 22; y++) for (let x = 4; x < 15; x++) px(b, x, y, (x + y) % 2 ? 'E' : 'e');
+    for (let y = 15; y < 18; y++) for (let x = 2; x < 5; x++) px(b, x, y, (x + y) % 2 ? 'E' : 'e');
+    rect(b, 4, 19, 11, 1, 'n'); rect(b, 8, 19, 3, 1, T.t); rect(b, 5, 14, 9, 1, 'E'); rect(b, 4, 21, 11, 1, 'E'); rect(b, 4, 20, 11, 1, 'e');
+    if (!P.ic) { stripe(l, 14, 15, GRIPS[P.I][0] - 1, GRIPS[P.I][1] - 1, ['e', 'E']); }
+    if (c !== 'common') { rect(b, 6, 14, 5, 1, T.t); }
+  },
+  plate: (b, l, k, P, c) => plateBody(b, l, k, P, c, false),
+  cape: (b, l, k, P, c) => plateBody(b, l, k, P, c, true)
+};
+const ARMOUR_DOWN = {
+  tunic(b, k, c) { rect(b, 12, 19, 10, 8, 'g'); rect(b, 12, 20, 10, 1, 'n'); rect(b, 12, 19, 10, 1, RAR[c].t); rect(b, 14, 22, 4, 2, 'g'); },
+  vest(b, k, c) { rect(b, 12, 19, 10, 8, 'n'); rect(b, 12, 20, 10, 1, 'N'); rect(b, 17, 21, 1, 5, 'm'); rect(b, 12, 26, 10, 1, RAR[c].t); rect(b, 14, 22, 4, 2, 'r'); },
+  chain(b, k, c) { for (let y = 19; y < 27; y++) for (let x = 12; x < 22; x++) px(b, x, y, (x + y) % 2 ? 'E' : 'e'); rect(b, 12, 20, 10, 1, 'n'); rect(b, 12, 19, 10, 1, RAR[c].t); rect(b, 14, 22, 4, 2, 'e'); },
+  plate(b, k, c, cape) {
+    rect(b, 12, 19, 10, 8, 'e'); rect(b, 13, 21, 3, 3, 'W'); rect(b, 12, 20, 10, 1, 'n'); rect(b, 12, 23, 10, 1, 'E'); rect(b, 12, 19, 10, 1, RAR[c].t); rect(b, 14, 22, 4, 2, 'E');
+    ell(b, 5.5, 20.5, 4.6, 5.2, 'e', (x, y) => x <= 7); rect(b, 8, 18, 2, 3, 'E'); if (c !== 'common') rect(b, 4, 15, 3, 1, RAR[c].t);   // helmet over the back of the head
+    if (cape) { rect(k, 11, 17, 12, 2, 'r'); if (c === 'epic') rect(k, 11, 17, 12, 1, 'x'); else if (c === 'rare') rect(k, 11, 17, 12, 1, 'l'); }
+  },
+  cape: (b, k, c) => ARMOUR_DOWN.plate(b, k, c, true)
+};
+const BOOTS = {
+  cloth(b, c) { const T = RAR[c]; for (const x of [5, 10]) { rect(b, x, 25, 5, 2, 'B'); rect(b, x + 1, 22, 3, 3, 'B'); rect(b, x + 1, 22, 3, 1, T.t); px(b, x + 4, 25, 'c'); } },
+  leather(b, c) { const T = RAR[c]; for (const x of [5, 10]) { rect(b, x, 25, 5, 2, 'N'); rect(b, x + 1, 22, 3, 3, 'm'); rect(b, x + 1, 22, 3, 1, T.t); px(b, x + 4, 25, 'n'); rect(b, x + 1, 26, 4, 1, 'N'); } },
+  iron(b, c) { const T = RAR[c]; for (const x of [5, 10]) { rect(b, x, 25, 5, 2, 'e'); rect(b, x + 1, 21, 3, 4, 'e'); rect(b, x, 21, 5, 1, T.t); px(b, x + 4, 25, 'W'); px(b, x + 1, 22, 'W'); rect(b, x + 1, 24, 3, 1, 'E'); } }
+};
+const BOOTS_DOWN = {
+  cloth(b, c) { rect(b, 27, 21, 3, 6, 'B'); rect(b, 24, 22, 3, 5, 'B'); rect(b, 24, 22, 1, 5, RAR[c].t); },
+  leather(b, c) { rect(b, 27, 21, 3, 6, 'N'); rect(b, 24, 22, 3, 5, 'm'); rect(b, 24, 22, 1, 5, RAR[c].t); rect(b, 27, 26, 3, 1, 'N'); },
+  iron(b, c) { rect(b, 27, 21, 3, 6, 'e'); rect(b, 24, 22, 3, 5, 'e'); rect(b, 24, 22, 1, 5, RAR[c].t); px(b, 29, 21, 'W'); px(b, 25, 23, 'W'); }
+};
+export const parseLook = (look) => { const [slot, style, rarity] = String(look || '').split('.'); return (slot === 'weapon' && WEAPON[style] || slot === 'armour' && ARMOUR[style] || slot === 'boots' && BOOTS[style]) && RAR[rarity] ? { slot, style, rarity } : null; };
+export const HERO_LOOK_STYLES = { weapon: Object.keys(WEAPON).filter((k) => k !== 'bare'), armour: Object.keys(ARMOUR), boots: Object.keys(BOOTS) };
+const HERO_SLOTS = ['weapon', 'armour', 'boots'];
+const heroLooks = (looks) => Object.fromEntries(HERO_SLOTS.map((s, i) => [s, parseLook((Array.isArray(looks) ? looks[i] : looks && looks[s]) || '')]).filter(([s, v]) => v && v.slot === s));
+export const heroSig = (looks) => HERO_SLOTS.map((s, i) => (Array.isArray(looks) ? looks[i] : looks && looks[s]) || '-').join('|');
+// One overlay in one frame, as raw grids {k, b, l}. icon: no arms, no hand (for the inventory icon).
+function overlayGrids(slot, style, rarity, frame, icon = false) {
+  const d = HERO, k = grid(d.w, d.h), b = grid(d.w, d.h), l = grid(d.w, d.h, 0, true), c0 = clips;
+  if (frame === 'down') {
+    if (slot === 'weapon') { if (style === 'bare') { rect(b, 1, 25, 1, 1, 'e'); line(b, 1, 25, 5, 25, 'e'); } else { const n = DROPPED[style]; px(b, 0, 25, 'n'); line(b, 1, 25, n, 25, 'e'); px(b, 2, 24, RAR[rarity].g); px(b, 2, 26, RAR[rarity].g); px(b, n, 25, 'W'); if (style === 'axe') { rect(b, n - 2, 23, 2, 1, 'e'); rect(b, n - 2, 27, 2, 1, 'e'); } if (rarity !== 'common') px(b, n - 3, 25, rarity === 'epic' ? 'v' : 'U'); } }
+    else if (slot === 'armour') ARMOUR_DOWN[style](b, k, rarity); else BOOTS_DOWN[style](b, rarity);
+    return { k, b, l };
+  }
+  const P = { ...poseOf(d, frame), ic: icon };
+  if (slot === 'weapon') { const [gx, gy, A] = GRIPS[P.I]; WEAPON[style](wpn(l, gx, gy, A), rarity); if (!icon) hand(l, gx, gy); }
+  else if (slot === 'armour') ARMOUR[style](b, l, k, P, rarity); else BOOTS[style](b, rarity);
+  if (clips > c0) CLIPS[`${slot}.${style}.${rarity}:${frame}`] = clips - c0;
+  return { k: move(d, k, frame, false), b: move(d, b, frame, false), l: move(d, l, frame, true) };
+}
+// raw (unfinished) frame of one look, its own parts stacked, for tests and icons
+export function overlayFrame(look, frame, icon = false) {
+  const p = parseLook(look); if (!p) return null;
+  const g = overlayGrids(p.slot, p.style, p.rarity, frame, icon);
+  return overlay(overlay(g.k, g.b), g.l).map((r) => r.join(''));
+}
+const doll = new Map();
+// The finished hero frame for a set of looks (array [weapon, armour, boots] or {weapon, armour, boots} of look strings, '' for empty). Cached by equipment signature.
+export function heroMap(frame, looks) {
+  const key = heroSig(looks) + ':' + frame; if (doll.has(key)) return doll.get(key);
+  const L = heroLooks(looks), d = HERO, P = poseOf(d, frame), parts = [];
+  const og = (s, st) => L[st] ? overlayGrids(L[st].slot, L[st].style, L[st].rarity, frame) : s === 'weapon' ? overlayGrids('weapon', 'bare', 'common', frame) : null;
+  const wp = og('weapon', 'weapon'), ar = og('armour', 'armour'), bt = og('boots', 'boots');
+  const b = grid(d.w, d.h), l = grid(d.w, d.h, 0, true);
+  if (frame === 'down') d.down(b); else d.draw(b, l, P);
+  const base = frame === 'down' ? [b] : [move(d, b, frame, false), move(d, l, frame, true)];
+  let raw = ar ? ar.k : grid(d.w, d.h);
+  for (const g of [...base, bt && bt.b, ar && ar.b, ar && ar.l, wp.b, wp.l]) raw = overlay(raw, g);
+  const out = finish(raw, false); doll.set(key, out); if (doll.size > 400) doll.delete(doll.keys().next().value);
+  return out;
+}
+export const heroMaps = (looks) => Object.fromEntries(FRAMES.map((f) => [f, heroMap(f, looks)]));
+// Icon for the inventory: the item's own overlay (idle A, no arms or hand), finished and cropped to its pixels. s is the whole-number scale the view shows it at (boots are small, so 3).
+export function iconMap(look) {
+  const p = parseLook(look); if (!p) return null;
+  const g = finish(overlayFrame(look, 'idleA', true).map((r) => [...r]), false);
+  let x0 = 99, x1 = -1, y0 = 99, y1 = -1; g.forEach((r, y) => { for (let x = 0; x < r.length; x++) if (r[x] !== '.') { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); } });
+  return g.slice(y0, y1 + 1).map((r) => r.slice(x0, x1 + 1));
+}
+const icons = new Map();
+export function iconInfo(look) {
+  if (!icons.has(look)) {
+    const m = iconMap(look), no = typeof document === 'undefined';
+    icons.set(look, !m ? { url: '', w: 0, h: 0, s: 2 } : { url: no ? '' : mapToCanvas(m).toDataURL(), w: m[0].length, h: m.length, s: look.startsWith('boots') ? 3 : 2 });
+  }
+  return icons.get(look);
+}
+
 const DEFS = { hero: HERO, slime, bat, skeleton, golem, rat, mushroom, goblin, imp, wisp, cultist, spider, gargoyle, ember, frost, mimic, troll: TROLL, knight: knightDef(false), lich, dknight: knightDef(true), demon, dragon };
 
 export const FRAMES = ['idleA', 'idleB', 'windup', 'strike', 'hurt', 'down'];
+// How a frame moves a body grid or a limb/weapon grid. The weapon (limb) follows the grip and is not leaned on the windup and strike; the body is.
+function move(d, g, frame, limb) {
+  const dir = d.dir || 1, split = d.split, [lw, ls, lh] = d.lean || [1, 2, 2];
+  if (frame === 'idleB') return d.alt ? g : bob(g, split);
+  if (frame === 'windup') return limb ? (d.alt ? g : bob(g, split)) : lean(bob(g, split), split, -dir * lw);
+  if (frame === 'strike') return limb ? g : lean(g, split, dir * ls);
+  if (frame === 'hurt') return lean(g, split, -dir * lh);
+  return g;
+}
+const poseOf = (d, frame) => { const n = frame === 'idleA' || frame === 'idleB' ? 'idle' : frame; return { n, alt: frame === 'idleB', I: IDX[n] ?? 0 }; };
 // Build one frame. idle B bobs the head and torso 1 px (or the unit's own alt drawing); windup pulls back and crouches, strike leans in, hurt leans away.
 function pose(d, frame) {
-  const dir = d.dir || 1, split = d.split, n = frame === 'idleA' || frame === 'idleB' ? 'idle' : frame, P = { n, alt: frame === 'idleB', I: IDX[n] ?? 0 };
+  const dir = d.dir || 1, P = poseOf(d, frame);
   const b = grid(d.w, d.h, d.ox || 0), l = grid(d.w, d.h, d.ox || 0, true);
   if (frame === 'down') {
     if (d.down) { d.down(b); return b; }
     d.draw(b, l, { n: 'idle', alt: false, I: 0 }); return crumple(overlay(b, l), dir);
   }
   d.draw(b, l, P);
-  const [lw, ls, lh] = d.lean || [1, 2, 2];
-  if (frame === 'idleB') return d.alt ? overlay(b, l) : overlay(bob(b, split), bob(l, split));
-  if (frame === 'windup') return overlay(lean(bob(b, split), split, -dir * lw), d.alt ? l : bob(l, split));
-  if (frame === 'strike') return overlay(lean(b, split, dir * ls), l);
-  if (frame === 'hurt') return overlay(lean(b, split, -dir * lh), lean(l, split, -dir * lh));
-  return overlay(b, l);
+  return overlay(move(d, b, frame, false), move(d, l, frame, true));
 }
 // MAPS[kind][frame] -> rows. frostdragon and golddragon are the dragon maps with another palette.
 export const MAPS = {}, META = {};
 for (const [k, d] of Object.entries(DEFS)) {
-  MAPS[k] = Object.fromEntries(FRAMES.map((f) => { const c0 = clips, m = finish(pose(d, f), !!d.thick); if (clips > c0) CLIPS[k + ':' + f] = clips - c0; return [f, m]; }));
+  MAPS[k] = k === 'hero' ? heroMaps([]) : Object.fromEntries(FRAMES.map((f) => { const c0 = clips, m = finish(pose(d, f), !!d.thick); if (clips > c0) CLIPS[k + ':' + f] = clips - c0; return [f, m]; }));
   META[k] = { w: d.w, h: d.h, px: d.px ?? (d.ox || 0) + (d.h > 30 ? 16 : 12) };
 }
 MAPS.frostdragon = MAPS.golddragon = MAPS.dragon; META.frostdragon = META.golddragon = META.dragon;
@@ -498,6 +651,17 @@ function eliteAura(img) {
   return c;
 }
 const ALIAS = { idle: 'idleA', attack: 'strike' };
+// The hero in his current gear: same shape as getSprite, cached by equipment signature and frame.
+const heroCache = new Map();
+export function getHero(frame = 'idleA', looks = []) {
+  frame = ALIAS[frame] || frame; const k = heroSig(looks) + ':' + frame;
+  if (!heroCache.has(k)) {
+    const img = mapToCanvas(heroMap(frame, looks)), base = getSprite('hero', 'idleA');
+    heroCache.set(k, { img, flash: silhouette(img), w: img.width, h: img.height, px: META.hero.px, pad: 0, top: base.top });
+    if (heroCache.size > 120) heroCache.delete(heroCache.keys().next().value);
+  }
+  return heroCache.get(k);
+}
 // frame is one of FRAMES (idle and attack still work). px is the column of the feet pivot in the sprite, so a view can plant it on a ground point.
 export function getSprite(kind, frame = 'idleA', elite = false) {
   frame = ALIAS[frame] || frame;

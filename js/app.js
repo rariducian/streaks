@@ -7,8 +7,8 @@ import {
   acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals
 } from './logic.js';
 import { load, save, exportJSON, importJSON } from './store.js';
-import { ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, forge, forgeCost, toggleLock, equip } from './game/engine.js';
-import { viewTower, mountTower, unmountTower, refreshTowerUi, gearSheet, AFF_NAME } from './game/view.js';
+import { ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, forge, forgeCost, toggleLock, equip, findItem } from './game/engine.js';
+import { viewTower, mountTower, unmountTower, towerMounted, refreshTowerUi, gearSheet, invSheet, invPatch, mountInv, unmountInv, newInv, equipMsg, heroHit, AFF_NAME } from './game/view.js';
 
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -368,7 +368,9 @@ function sheetHtml() {
         <button class="btn soft block red-text" data-act="reset">Reset all data</button></div>
       <p class="small muted" style="text-align:center;margin-top:14px">All data stays on this phone.</p>`;
   } else if (sheet.type === 'gear') {
-    const r = gearSheet(ensureGame(state), sheet.slot, sheet.msg); title = r.title; body = r.body;
+    const r = gearSheet(ensureGame(state), sheet.slot, sheet.msg, sheet.id ?? null); title = r.title; body = r.body;
+  } else if (sheet.type === 'inv') {
+    const r = invSheet(ensureGame(state), sheet); title = r.title; body = r.body;
   } else if (sheet.type === 'quick') {
     title = 'Quick log';
     const run = runningFast(state);
@@ -388,13 +390,14 @@ function sheetHtml() {
       <div class="field" style="display:block"><label for="efn">Note</label><textarea id="efn" class="note-in">${esc(f.note)}</textarea></div>
       <div class="actions" style="justify-content:space-between"><button class="btn" data-act="saveFast">Save</button><button class="link red" data-act="delFast">Delete</button></div>`;
   }
-  return `<div class="scrim" data-act="closeSheet"></div><div class="sheet" role="dialog" aria-label="${title}"><div class="grab"></div><div class="sh-head"><h3>${title}</h3><button class="avatar" data-act="closeSheet" aria-label="Close" style="width:32px;height:32px">${I.x.replace('class="ic"', 'class="ic sm"')}</button></div><div class="sh-body">${body}</div></div>`;
+  return `<div class="scrim" data-act="closeSheet"></div><div class="sheet${sheet.type === 'inv' ? ' inv' : ''}" role="dialog" aria-label="${title}"><div class="grab"></div><div class="sh-head"><h3>${title}</h3><button class="avatar" data-act="closeSheet" aria-label="Close" style="width:32px;height:32px">${I.x.replace('class="ic"', 'class="ic sm"')}</button></div><div class="sh-body">${body}</div></div>`;
 }
 function renderSheet() {
   const root = $('#sheet-root'), old = $('.sh-body', root), sc = old ? old.scrollTop : 0;
-  root.innerHTML = sheetHtml();
+  unmountInv(); root.innerHTML = sheetHtml();
   const nb = $('.sh-body', root); if (nb) nb.scrollTop = sc;
   document.body.classList.toggle('lock', !!sheet || !!sess);
+  if (sheet && sheet.type === 'inv') mountInv(state, sheet);
 }
 
 /* ---------- render ---------- */
@@ -635,7 +638,10 @@ const act = {
   tab: (el) => { tab = el.dataset.tab; sheet = null; render(); window.scrollTo(0, 0); },
   settings: () => { unmountTower(); sheet = { type: 'settings' }; renderSheet(); },
   quick: () => { unmountTower(); sheet = { type: 'quick' }; renderSheet(); },
-  closeSheet: () => { sheet = null; renderSheet(); if (tab === 'tower' && !sess) mountTower(state, save); },
+  closeSheet: () => {
+    if (sheet && sheet.back) { sheet = sheet.back; renderSheet(); return; }   // the forge opened from the inventory goes back to it
+    sheet = null; renderSheet(); if (tab === 'tower' && !sess && !towerMounted()) mountTower(state, save);   // the inventory leaves the battle running, so there is nothing to remount
+  },
   startSession: () => openSession(false),
   startMin: () => openSession(true),
   closeSess: () => closeSession(),
@@ -706,12 +712,20 @@ const act = {
   gearSheet: (el) => { unmountTower(); sheet = { type: 'gear', slot: el.dataset.slot, msg: '' }; renderSheet(); },
   // forge, lock and equip only re-render the sheet and patch the tab behind it, never the canvas
   forge: (el) => {
-    const g = ensureGame(state), slot = el.dataset.slot, a = el.dataset.fa, i = Number(el.dataset.i) || 0, it = g.gear[slot], c = forgeCost(g, a, it), was = it && it.aff[i] && it.aff[i].id;
-    if (forge(g, slot, a, i)) {
-      const n = g.gear[slot], msg = a === 'reroll' ? `Rerolled ${AFF_NAME[was]} into ${AFF_NAME[n.aff[i].id]}.` : a === 'add' ? `Added ${AFF_NAME[n.aff[n.aff.length - 1].id]}.` : a === 'upgrade' ? `Upgraded to ${n.rarity}, added ${AFF_NAME[n.aff[n.aff.length - 1].id]}.` : `Tempered to level ${n.lvl}.`;
+    const g = ensureGame(state), slot = el.dataset.slot, a = el.dataset.fa, i = Number(el.dataset.i) || 0, pick = el.dataset.id ? findItem(g, Number(el.dataset.id)) : null, it = pick || g.gear[slot], c = forgeCost(g, a, it), was = it && it.aff[i] && it.aff[i].id;
+    if (forge(g, slot, a, i, Math.random, pick)) {
+      const n = it, msg = a === 'reroll' ? `Rerolled ${AFF_NAME[was]} into ${AFF_NAME[n.aff[i].id]}.` : a === 'add' ? `Added ${AFF_NAME[n.aff[n.aff.length - 1].id]}.` : a === 'upgrade' ? `Upgraded to ${n.rarity}, added ${AFF_NAME[n.aff[n.aff.length - 1].id]}.` : `Tempered to level ${n.lvl}.`;
       sheet.msg = `${msg} Spent ${c} Focus.`; save(state); refreshTowerUi(state); renderSheet();
     }
   },
+  // inventory: taps patch the open sheet in place (invPatch), so the preview, the battle canvas and the stats behind it are never rebuilt
+  invSheet: () => { sheet = newInv(); renderSheet(); },
+  heroTap: (el, e) => { if (tab === 'tower' && !sheet && !sess && heroHit(el, e)) act.invSheet(); },
+  invSel: (el) => { const id = Number(el.dataset.id); sheet.sel = sheet.sel === id ? null : id; sheet.msg = ''; invPatch(state, sheet); },
+  invTab: (el) => { sheet.slot = el.dataset.slot; const it = sheet.sel != null && findItem(ensureGame(state), sheet.sel); if (it && sheet.slot !== 'all' && it.slot !== sheet.slot) sheet.sel = null; sheet.msg = ''; invPatch(state, sheet); },
+  invEquip: () => { const g = ensureGame(state), it = sheet.sel != null && findItem(g, sheet.sel); if (!it) return; const m = equipMsg(g, it); if (equip(g, it.id)) { sheet.msg = m; save(state); refreshTowerUi(state); invPatch(state, sheet); } },
+  invLock: () => { if (sheet.sel != null && toggleLock(ensureGame(state), sheet.sel)) { const it = findItem(ensureGame(state), sheet.sel); sheet.msg = it.lock ? 'Locked.' : 'Unlocked.'; save(state); refreshTowerUi(state); invPatch(state, sheet); } },
+  invForge: () => { const it = sheet.sel != null && findItem(ensureGame(state), sheet.sel); if (it) { sheet = { type: 'gear', slot: it.slot, id: it.id, msg: '', back: sheet }; renderSheet(); } },
   lockItem: (el) => { if (toggleLock(ensureGame(state), Number(el.dataset.id))) { sheet.msg = ''; save(state); renderSheet(); } },
   equipItem: (el) => { if (equip(ensureGame(state), Number(el.dataset.id))) { sheet.msg = 'Equipped.'; save(state); renderSheet(); } },
   ascend: async () => {
@@ -734,6 +748,7 @@ const changes = {
     if (w === 'calib') s.calib.max = n; else s.logs[w === 'log' ? s.idx : s.idx - 1] = n;
     el.value = n;
   },
+  invSort: (el) => { if (sheet && sheet.type === 'inv') { sheet.sort = el.value; invPatch(state, sheet); } },
   fastMin: (el) => commit(withSettings(state, { fastMinHours: Number(el.value) })),
   fastGoal: (el) => commit(withSettings(state, { fastGoalHours: Number(el.value) })),
   workSec: (el) => commit(withSettings(state, { workSec: Number(el.value) })),
@@ -744,7 +759,7 @@ const changes = {
 };
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]'); if (!el || !act[el.dataset.act]) return;
-  act[el.dataset.act](el);
+  act[el.dataset.act](el, e);
 });
 document.addEventListener('keydown', (e) => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[role="button"][data-act]')) { e.preventDefault(); e.target.click(); }

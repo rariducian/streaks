@@ -145,7 +145,7 @@ The sim advances every frame, but painting is capped at about 20 fps and stops w
 2. **"While you were away" banner:** shown once after the offline sim. Floors climbed, bosses beaten, best drop.
 3. **Currency row:** Sweat, Focus, Souls. Tiles carry plain labels for VoiceOver and the glyphs are hidden from it.
 4. **Stats:** 3 rows (level, current value, next value, cost button). The button is disabled when you can't afford it. Buying updates the rows in place (`refreshTowerUi`), so the canvas is never rebuilt. Buy buttons have labels like "Upgrade Attack to level 4 for 29 Sweat".
-5. **Gear:** 3 slots (rarity colour, bonus, power, affix chips). Tap one for the gear sheet. A stash line sits underneath.
+5. **Gear:** 3 slots (rarity colour, bonus, power, affix chips). Tap one for the gear sheet. A stash line sits underneath, with an **Inventory** button (see "Inventory").
 6. **Focus upgrades:** 3 rows. 6b. **Soul tree:** 8 rows like the stat rows, plus a refund row.
 7. **Ascend card:** only when a token is held.
 8. **"How you earn" footnote:** one line per source.
@@ -175,9 +175,33 @@ Bars move only on hits. `schedule()` in view.js turns the sim's closed-form figh
 - **View:** idle alternates at about 2 fps; each scheduled hit plays windup then strike with a 1 to 2 px step; being hit shows hurt (with the white flash); a KO or a kill shows down. With reduced motion only idle A (and down) is used.
 - Boss recolours are palette swaps of a base map (the Death Knight has its own shape: spiked crown and a scythe). The elite outline is drawn on a padded copy. Sprites carry a feet pivot (`px`) that the view plants on the ground point.
 
+## Inventory
+One bottom sheet (`invSheet` in view.js), opened by the Inventory button in the Gear section or by tapping the hero on the battle canvas (`heroHit` reuses the canvas scaling maths; the Gear button is the keyboard and VoiceOver route).
+- **Top:** a hero preview (canvas, x4, idle breathing and a swing every few seconds) beside the compare panel. Under them Equip, Lock and Forge.
+- **Tabs and sort:** All, Weapon, Armour, Boots; sort by Power (default), Rarity (epic first) or Newest (highest id). `inventory(g, slot, sort)` in the engine returns equipped items and the stash together.
+- **Tiles (3 across, fits 360 px):** pixel icon from the item's overlay art, border colour by rarity, "Tier N" and the item kind, an Equipped badge and a lock badge. Each is a button: "Tier 5 epic axe, power 120, equipped, locked".
+- **Select and try-on:** tapping a tile selects it (tap again to clear). While selected, the preview wears it (`gearLooks(g, item)`); nothing is saved. The compare panel is `role="status"` (a live region) and shows power and the slot's stat against the equipped item, `compareItem(g, it)`: green up, red down, always with a sign and a screen-reader "up 6" or "down 3". Affixes show as chips.
+- **Equip, Lock, Forge:** all patch the open sheet in place (`invPatch`), never the whole page, so the preview and the battle canvas are not rebuilt and focus stays on the tapped tile. The battle sprite and stats pick up the new gear on the next paint and `refreshTowerUi`. Equip is disabled for the worn item, or when the worn item in that slot is locked. Forge opens the existing forge sheet for that item (`forge(g, slot, action, i, rng, item)` takes a stashed item); closing it returns to the inventory. Forging a stashed item never changes stats.
+- **Loop:** the inventory leaves the battle running behind it (paint stays capped at 20 fps with the IntersectionObserver pause), so closing needs no remount. The older gear sheet still unmounts and catches up. Reduced motion draws the preview as one still frame (redrawn when the look changes).
+
+## Hero looks
+The hero is a paper doll (`heroMap(frame, looks)` in sprites.js): cape (behind), base body, base sleeve, boots, armour, armour sleeve, then weapon and hand, stacked per frame and finished once so the outline is shared. Each overlay has all 6 frames at the hero's 32 x 28 size and is posed by the same `move()` rules as the base: weapons follow the grip (`GRIPS`) through windup, strike and hurt, armour follows the idle bob and lean, boots stay on the ground, and each has a lying "down" drawing. Composites are cached by equipment signature (`heroSig`) and frame. The empty outfit is pixel-identical to the old hero (red tunic, starter blade, plain shoes).
+- **`look`:** `'slot.style.rarity'`, derived by `lookOf(item)` from slot, tier and rarity only. `ensureGame` recomputes it on load (old saves need nothing), `rollDrop`, `giveDrop` and the forge's rarity upgrade keep it right, and the icon, preview and battle sprite all read it.
+
+| Tier | Weapon | Armour | Boots |
+|---|---|---|---|
+| 1-2 | short sword | tunic (green cloth) | cloth (tiers 1-3) |
+| 3-4 | longsword | leather vest | leather (4-6) |
+| 5-6 | axe | chainmail | leather |
+| 7-8 | spear | plate and helmet | iron greaves (7+) |
+| 9+ | greatsword | plate, helmet and cape | iron greaves |
+
+- **Rarity:** common is plain steel and a stone trim. Rare adds blue: glints on the blade, blue guard, blue trim and a blue crest. Epic adds a gold hilt and guard with a purple glow pixel, gold trim and crest, and a gold cape edge.
+- All overlay pixels use `PAL` roles. One pixel features use flat roles so `finish()` does not bevel them into their shade. `tools/silhouette-sheet.mjs` is unchanged and shows the empty hero.
+
 ## Data
 - Save in `state.game`, created lazily by `ensureGame(state)`.
-- **Fields:** `sweat`, `focus`, `souls`, `tokens`, `stats {atk, hp, spd}`, `focusUp {endurance, precision, luck}`, `floor`, `runMax`, `bestFloor`, `grit`, `gear {weapon, armour, boots}` (items: `id, slot, tier, rarity, bonus, lvl, aff[{id,v}], lock, added`), `stash[]`, `talents{}`, `soulsSpent`, `respecUsed`, `seq`, `drops[]`, `paid{}`, `lastTick`, `away`.
+- **Fields:** `sweat`, `focus`, `souls`, `tokens`, `stats {atk, hp, spd}`, `focusUp {endurance, precision, luck}`, `floor`, `runMax`, `bestFloor`, `grit`, `gear {weapon, armour, boots}` (items: `id, slot, tier, rarity, bonus, lvl, aff[{id,v}], lock, added, look`; `look` is derived and refilled on load), `stash[]`, `talents{}`, `soulsSpent`, `respecUsed`, `seq`, `drops[]`, `paid{}`, `lastTick`, `away`.
 - Export and import carry it automatically.
 
 ## Out of scope for v1

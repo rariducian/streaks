@@ -38,6 +38,11 @@ export const CONFIG = {
 export const SLOTS = ['weapon', 'armour', 'boots'];
 export const SLOT_STAT = { weapon: 'atk', armour: 'hp', boots: 'spd' };
 export const RARITIES = ['common', 'rare', 'epic'];
+// Look: the art an item shows on the hero, the inventory icon and the battle sprite. Derived from slot, tier and rarity only, so it never needs saving (tidy() refills it on load).
+// Weapons change every 2 tiers (short sword, longsword, axe, spear, greatsword from 9), armour every 2 (tunic, vest, chain, plate, plate and cape from 9), boots every 3.
+export const LOOKS = { weapon: ['sword', 'longsword', 'axe', 'spear', 'greatsword'], armour: ['tunic', 'vest', 'chain', 'plate', 'cape'], boots: ['cloth', 'leather', 'iron'] };
+const LOOK_STEP = { weapon: 2, armour: 2, boots: 3 };
+export const lookOf = (it) => { const l = LOOKS[it.slot]; return `${it.slot}.${l[Math.min(l.length - 1, Math.floor((Math.max(1, it.tier) - 1) / LOOK_STEP[it.slot]))]}.${it.rarity}`; };
 export const AFFIXES = Object.keys(CONFIG.affix);
 export const TALENTS = Object.keys(CONFIG.talents);
 
@@ -62,8 +67,9 @@ export function ensureGame(state) {
   return g;
 }
 function num2(o, k) { if (!Number.isFinite(o[k])) o[k] = 0; }
-// Old items have no affixes, level, lock or id. Fill them in without touching bonus.
+// Old items have no affixes, level, lock, id or look. Fill them in without touching bonus.
 function tidy(g, it) {
+  it.look = lookOf(it);
   it.aff = Array.isArray(it.aff) ? it.aff.filter((a) => a && CONFIG.affix[a.id] && Number.isFinite(a.v)) : [];
   if (!Number.isFinite(it.lvl)) it.lvl = 0;
   it.lock = !!it.lock; it.added = !!it.added;
@@ -185,11 +191,11 @@ export function rollDrop(g, floor, rng = Math.random) {
   const epicP = CONFIG.rarity.epic.p + shift, rareP = CONFIG.rarity.rare.p;
   const rarity = r < epicP ? 'epic' : r < epicP + rareP ? 'rare' : 'common';
   const aff = []; for (let i = 0; i < CONFIG.maxAffix[rarity]; i++) aff.push(rollAffix(tier, aff, rng));
-  return { slot, tier, rarity, bonus: CONFIG.gearPct * tier * CONFIG.rarity[rarity].mult, floor, lvl: 0, aff, lock: false, added: false };
+  return { slot, tier, rarity, bonus: CONFIG.gearPct * tier * CONFIG.rarity[rarity].mult, floor, lvl: 0, aff, lock: false, added: false, look: lookOf({ slot, tier, rarity }) };
 }
 export const stashMax = (g) => CONFIG.stash + talFx(g, 'hoarder');
 const scrapOf = (it) => CONFIG.scrapPer * it.tier;
-const own = (it) => ({ slot: it.slot, tier: it.tier, rarity: it.rarity, bonus: it.bonus, floor: it.floor, id: it.id, lvl: it.lvl || 0, aff: (it.aff || []).map((a) => ({ ...a })), lock: !!it.lock, added: !!it.added });
+const own = (it) => ({ slot: it.slot, tier: it.tier, rarity: it.rarity, bonus: it.bonus, floor: it.floor, id: it.id, look: it.look || lookOf(it), lvl: it.lvl || 0, aff: (it.aff || []).map((a) => ({ ...a })), lock: !!it.lock, added: !!it.added });
 // Puts an item in the stash. Over the limit, the oldest unlocked item is scrapped for Sweat (the new one itself if everything is locked). Returns Sweat scrapped.
 function stow(g, it) {
   g.stash.push(it); let scrap = 0;
@@ -208,6 +214,18 @@ export function giveDrop(g, item) {
   const rec = { ...own(it), equipped: better, scrap }; delete rec.id;
   g.drops.push(rec); if (g.drops.length > CONFIG.dropLog) g.drops.splice(0, g.drops.length - CONFIG.dropLog);
   return rec;
+}
+// Every item you own, equipped first. slot is 'all' or one of SLOTS. sort: 'power' (best first), 'rarity' (epic first, then power), 'newest' (highest id first).
+export function inventory(g, slot = 'all', sort = 'power') {
+  const rk = { epic: 3, rare: 2, common: 1 }, all = SLOTS.map((s) => g.gear[s]).filter(Boolean).map((it) => ({ it, equipped: true })).concat(g.stash.map((it) => ({ it, equipped: false })));
+  const by = { power: (a, b) => power(b.it) - power(a.it), rarity: (a, b) => rk[b.it.rarity] - rk[a.it.rarity] || power(b.it) - power(a.it), newest: (a, b) => b.it.id - a.it.id }[sort] || ((a, b) => power(b.it) - power(a.it));
+  return all.filter((x) => slot === 'all' || x.it.slot === slot).sort((a, b) => by(a, b) || b.it.id - a.it.id);
+}
+// What wearing `it` would change against what is equipped in its slot: power, and the slot's stat (Attack, Health or Speed) before and after.
+export function compareItem(g, it) {
+  const cur = g.gear[it.slot], stat = SLOT_STAT[it.slot], before = heroStats(g)[stat], after = heroStats({ ...g, gear: { ...g.gear, [it.slot]: it } })[stat];
+  const r = (v) => Math.round(v * 10) / 10;
+  return { cur, same: !!cur && cur.id === it.id, stat, power: power(it), dPower: r(power(it) - power(cur)), before, after, dStat: after - before };
 }
 export const findItem = (g, id) => SLOTS.map((s) => g.gear[s]).concat(g.stash).find((it) => it && it.id === id) || null;
 export function toggleLock(g, id) { const it = findItem(g, id); if (!it) return false; it.lock = !it.lock; return true; }
@@ -234,13 +252,14 @@ export function forgeBlock(it, action, i = 0) {
   return action === 'temper' ? '' : 'Unknown action';
 }
 // Spend Focus on the equipped item of a slot. i is the affix to reroll. Returns true if it worked.
-export function forge(g, slot, action, i = 0, rng = Math.random) {
-  const it = g.gear[slot]; if (forgeBlock(it, action, i)) return false;
+// `item` forges a stashed item instead (the inventory does this); stats only change if it is equipped.
+export function forge(g, slot, action, i = 0, rng = Math.random, item = null) {
+  const it = item || g.gear[slot]; if (forgeBlock(it, action, i)) return false;
   const c = forgeCost(g, action, it); if (g.focus < c) return false;
   g.focus -= c;
   if (action === 'reroll') { const rest = it.aff.filter((_, k) => k !== i); it.aff[i] = rollAffix(it.tier, rest, rng); }
   else if (action === 'add') { it.aff.push(rollAffix(it.tier, it.aff, rng)); it.added = true; }
-  else if (action === 'upgrade') { it.rarity = RARITIES[RARITIES.indexOf(it.rarity) + 1]; it.aff.push(rollAffix(it.tier, it.aff, rng)); it.bonus = baseBonus(it); }
+  else if (action === 'upgrade') { it.rarity = RARITIES[RARITIES.indexOf(it.rarity) + 1]; it.aff.push(rollAffix(it.tier, it.aff, rng)); it.bonus = baseBonus(it); it.look = lookOf(it); }
   else { it.lvl = (it.lvl || 0) + 1; it.bonus = baseBonus(it); }
   return true;
 }
