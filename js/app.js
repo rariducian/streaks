@@ -6,7 +6,9 @@ import {
   deleteFast, fastStage, fastStats, moveTrend, moveProgress, recentEvents, growthOffer,
   acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals
 } from './logic.js';
-import { load, save, exportJSON, importJSON } from './store.js';
+import { load, save, exportJSON, importJSON, normalise, STORAGE_KEY } from './store.js';
+import { migrate } from './logic.js';
+import { ensurePersist, idbStore, listSnaps, snapshot, restoreOffer, importConfirm, restoreConfirm, backupCardText, fmtSize } from './backup.js';
 import { ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, forge, forgeCost, toggleLock, equip, findItem, atDoor, fightFloor, readyBoss } from './game/engine.js';
 import { viewTower, mountTower, unmountTower, towerMounted, refreshTowerUi, gearSheet, invSheet, invPatch, mountInv, unmountInv, newInv, equipMsg, heroHit, closeLoot, keysLabel, AFF_NAME } from './game/view.js';
 
@@ -64,7 +66,23 @@ let sheet = null;       // { type, id?, slot?, msg? }
 let sess = null;        // session UI state
 let ticker = null;
 
-function commit(next) { state = next; try { save(state); } catch (e) { toast('Could not save. Storage may be full.'); } render(); }
+// Data protection: persistent storage (asked at most twice, at boot then after the first save) and the daily IndexedDB snapshot.
+let persistState = 'Not supported', persistTries = 0, snaps = [];
+const bak = (() => { try { return idbStore(); } catch (e) { return null; } })();
+async function askPersist() {
+  if (persistTries >= 2 || persistState === 'Protected') return;
+  persistTries++; persistState = await ensurePersist();
+  try { localStorage.setItem('streaks.persist', persistState); } catch (e) { /* private mode */ }
+  if (sheet && sheet.type === 'settings') renderSheet();
+}
+async function refreshSnaps() { snaps = await listSnaps(bak); if (sheet && sheet.type === 'settings') renderSheet(); }
+function commit(next) {
+  state = next; let ok = false;
+  try { ok = save(state); } catch (e) { /* handled below */ }
+  if (!ok) toast('Could not save. Storage may be full.');
+  else { askPersist(); snapshot(bak, state, new Date()).then((w) => { if (w && sheet && sheet.type === 'settings') refreshSnaps(); }); }
+  render();
+}
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2400); }
 
 /* iOS-style action sheet. ask({ title, message, confirmLabel, destructive }) -> Promise<boolean>. Escape or scrim tap = cancel. */
@@ -177,7 +195,7 @@ function viewToday() {
   const g = growthOffer(state, today);
   if (g) cards.push(`<div class="note"><h3>Ready for ${g.minutes}-minute sessions?</h3><p>You trained 5 or more days a week for 4 weeks in a row. You can add another move to each session.</p><div class="row"><button class="btn sm" data-act="growYes">Yes, grow</button><button class="link" data-act="growNo">Not now</button></div></div>`);
   if (barUnlockDue(state)) cards.push(`<div class="note"><h3>Get a pull-up bar</h3><p>You have maxed out the rows you can do with a kettlebell. A pull-up bar unlocks the next levels.</p><div class="row"><button class="btn sm" data-act="gotBar">I have a bar</button></div></div>`);
-  if (backupDue(state, now)) cards.push(`<div class="note"><h3>Back up your data</h3><p>Your data lives only on this phone. Save a backup file now.</p><div class="row"><button class="btn sm" data-act="export">Export backup</button></div></div>`);
+  if (backupDue(state, now)) cards.push(`<div class="note"><h3>Back up your data</h3><p>${esc(backupCardText(state))}</p><div class="row"><button class="btn sm" data-act="export">Back up now</button></div></div>`);
   if (cards.length) html += `<div class="section"><h2 class="title">For you</h2>${cards.join('')}</div>`;
   return html;
 }
@@ -369,11 +387,13 @@ function sheetHtml() {
       <div class="field"><label>Sound</label>${toggle(s.soundOn, 'toggleSound')}</div>
       <div class="field"><label>I have a pull-up bar</label>${toggle(s.pullupBar, 'toggleBar')}</div>
       <div class="field"><label>Last backup</label><span class="muted">${s.lastBackupAt ? esc(dmy(new Date(s.lastBackupAt))) : 'Never'}</span></div>
+      <div class="field"><label>Storage</label><span class="muted">${esc(persistState)}</span></div>
       <div style="display:flex;flex-direction:column;gap:10px;margin-top:14px">
         <button class="btn soft block" data-act="export">Export backup</button>
         <button class="btn soft block" data-act="import">Import backup</button>
         <input type="file" id="importFile" accept="application/json,.json" hidden>
         <button class="btn soft block red-text" data-act="reset">Reset all data</button></div>
+      ${snaps.length ? `<h4 style="margin:18px 0 6px">Restore from snapshot</h4>${snaps.map((x) => `<button class="field" style="width:100%;text-align:left" data-act="restoreSnap" data-key="${esc(x.key)}"><label>${esc(x.date)}${x.label === 'daily' ? '' : ` &middot; ${esc(x.label)}`}</label><span class="muted">${esc(fmtSize(x.size || 0))}</span></button>`).join('')}` : ''}
       <p class="small muted" style="text-align:center;margin-top:14px">All data stays on this phone.</p>`;
   } else if (sheet.type === 'gear') {
     const r = gearSheet(ensureGame(state), sheet.slot, sheet.msg, sheet.id ?? null); title = r.title; body = r.body;
@@ -641,7 +661,8 @@ async function doImport(file) {
     const text = await file.text();
     const r = importJSON(text); const next = r && r.state ? r.state : r;
     if (!next || !next.settings) throw new Error('bad');
-    if (!(await ask({ title: 'Replace all data?', message: 'This replaces everything on this phone with the backup.', confirmLabel: 'Replace data', destructive: true }))) return;
+    if (!(await ask({ ...importConfirm(next), destructive: true }))) return;
+    await snapshot(bak, state, new Date(), { label: 'before import', force: true });
     sheet = null; commit(next); toast('Backup imported.');
   } catch (e) { toast('That file is not a valid backup.'); }
 }
@@ -649,7 +670,12 @@ async function doImport(file) {
 /* ---------- actions ---------- */
 const act = {
   tab: (el) => { tab = el.dataset.tab; sheet = null; render(); window.scrollTo(0, 0); },
-  settings: () => { unmountTower(); sheet = { type: 'settings' }; renderSheet(); },
+  settings: () => { unmountTower(); sheet = { type: 'settings' }; renderSheet(); refreshSnaps(); },
+  restoreSnap: async (el) => {
+    const x = snaps.find((q) => q.key === el.dataset.key); if (!x) return;
+    if (!(await ask(restoreConfirm(x)))) return;
+    await snapshot(bak, state, new Date(), { label: 'before restore', force: true });
+    sheet = null; commit(normalise(migrate(structuredClone(x.state)))); toast('Restored.'); },
   quick: () => { unmountTower(); sheet = { type: 'quick' }; renderSheet(); },
   closeSheet: () => {
     if (sheet && sheet.back) { sheet = sheet.back; renderSheet(); return; }   // the forge opened from the inventory goes back to it
@@ -793,6 +819,12 @@ document.addEventListener('visibilitychange', () => {
 
 /* ---------- boot ---------- */
 render();
+askPersist();
+(async () => {   // if localStorage is empty or damaged but a snapshot exists, offer it
+  let text = null; try { text = localStorage.getItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+  const x = await restoreOffer(text, bak); if (!x) return;
+  if (await ask(restoreConfirm(x))) { commit(normalise(migrate(structuredClone(x.state)))); toast('Restored.'); }
+})();
 setInterval(updateFastLive, 1000);
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
