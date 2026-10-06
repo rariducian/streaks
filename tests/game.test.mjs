@@ -62,15 +62,15 @@ test('rewards: fasts pay focus with cap, short fasts pay nothing', () => {
   const s = fresh(), mk = (id, h) => ({ id, start: new Date(2026, 1, 1).toISOString(), end: new Date(2026, 1, 1, h).toISOString(), goalHours: 16 });
   s.fasts.push(mk('a', 12), mk('b', 16), mk('c', 11), mk('d', 40), { id: 'run', start: D(2026, 2, 3).toISOString(), end: null });
   G.syncRewards(s);
-  assert.equal(s.game.paid['f:a'], 30); assert.equal(s.game.paid['f:b'], 50); assert.equal(s.game.paid['f:c'], undefined); assert.equal(s.game.paid['f:d'], 80);
-  assert.equal(s.game.focus, 160); assert.equal(G.syncRewards(s).focus, 0);
+  assert.equal(s.game.paid['f:a'], 60); assert.equal(s.game.paid['f:b'], 100); assert.equal(s.game.paid['f:c'], undefined); assert.equal(s.game.paid['f:d'], 160);
+  assert.equal(s.game.focus, 320); assert.equal(G.syncRewards(s).focus, 0);
   s.settings.fastMinHours = 16; s.fasts.push(mk('e', 15)); assert.equal(G.syncRewards(s).focus, 0);
 });
 
 test('cost formulas and stats', () => {
   assert.equal(G.statCost('atk', 0), 20); assert.equal(G.statCost('atk', 10), Math.ceil(20 * 1.04 ** 10));
   assert.equal(G.statCost('spd', 5), Math.ceil(25 * 1.05 ** 5));
-  assert.equal(G.focusCost('endurance', 2), Math.ceil(30 * 1.4 ** 2)); assert.equal(G.focusCost('precision', 1), Math.ceil(30 * 1.25)); assert.equal(G.focusCost('luck', 3), Math.ceil(40 * 1.3 ** 3));
+  assert.equal(G.focusCost('endurance', 2), Math.ceil(30 * 1.12 ** 2)); assert.equal(G.focusCost('precision', 1), Math.ceil(30 * 1.06)); assert.equal(G.focusCost('luck', 3), Math.ceil(40 * 1.12 ** 3));
   const g = game({ stats: { atk: 10, hp: 10, spd: 100 }, souls: 5 });
   let h = G.heroStats(g); close(h.atk, 25 * 1.5); close(h.hp, 200 * 1.5); close(h.spd, 3);   // milestone at level 10. Souls do nothing by themselves any more (Soul tree)
   g.gear.boots = { slot: 'boots', tier: 1, rarity: 'common', bonus: 0.1 }; close(G.heroStats(g).spd, 3.3);
@@ -249,10 +249,10 @@ test('power score: base bonus plus weighted affixes', () => {
 
 test('forge: costs scale with tier, rise with Temper level, and Ancestral forge cuts them', () => {
   const g = game(), it = item('weapon', 3, 'common'), F = G.CONFIG.forge;
-  for (const a of ['reroll', 'add', 'upgrade']) assert.equal(G.forgeCost(g, a, it), Math.ceil(F[a] * 1.35 ** 3));
-  assert.equal(G.forgeCost(g, 'temper', it), Math.ceil(F.temper * 1.35 ** 3)); assert.equal(G.forgeCost(g, 'temper', { ...it, lvl: 4 }), Math.ceil(F.temper * 1.35 ** 3 * F.temperGrow ** 4));
+  for (const a of ['reroll', 'add', 'upgrade']) assert.equal(G.forgeCost(g, a, it), Math.ceil(F[a] * 1.1 ** 3));
+  assert.equal(G.forgeCost(g, 'temper', it), Math.ceil(F.temper * 1.1 ** 3)); assert.equal(G.forgeCost(g, 'temper', { ...it, lvl: 4 }), Math.ceil(F.temper * 1.1 ** 3 * F.temperGrow ** 4));
   assert.ok(G.forgeCost(g, 'reroll', item('weapon', 6, 'common')) > G.forgeCost(g, 'reroll', it));
-  g.talents.ancestral = 3; assert.equal(G.forgeCost(g, 'reroll', it), Math.ceil(F.reroll * 1.35 ** 3 * 0.85));
+  g.talents.ancestral = 3; assert.equal(G.forgeCost(g, 'reroll', it), Math.ceil(F.reroll * 1.1 ** 3 * 0.85));
 });
 
 test('forge: reroll one affix (your pick, no duplicates, keeps the rest)', () => {
@@ -362,7 +362,7 @@ test('talents: head start (never past runMax - 1), second wind, prospector, hoar
   const h = game(); assert.equal(G.stashMax(h), 6); h.talents.hoarder = 2; assert.equal(G.stashMax(h), 8);
   const f = game(); assert.equal(G.rollDrop(f, 10, seq(0.4, 0.06)).rarity, 'rare'); f.talents.fortune = 3; assert.equal(G.rollDrop(f, 10, seq(0.4, 0.06)).rarity, 'epic');   // epic 5% + 6%
   f.focusUp.luck = 2; assert.equal(G.rollDrop(f, 10, seq(0.4, 0.1)).rarity, 'epic');   // they add
-  const af = game(); af.talents.ancestral = 5; assert.equal(G.forgeCost(af, 'temper', item('weapon', 1, 'common')), Math.ceil(30 * 1.35 * 0.75));
+  const af = game(); af.talents.ancestral = 5; assert.equal(G.forgeCost(af, 'temper', item('weapon', 1, 'common')), Math.ceil(15 * 1.1 * 0.75));
 });
 
 test('refund all talents: free, once per ascension, resets on ascend', () => {

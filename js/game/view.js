@@ -245,7 +245,7 @@ export function awayHtml(a) {
   if (!a) return '';
   const hrs = a.seconds >= 3600 ? `${Math.round(a.seconds / 360) / 10} h` : `${Math.round(a.seconds / 60)} min`;
   const best = a.best ? ` Best drop: ${esc(a.best.rarity)} ${esc(SLOT_NAME[a.best.slot].toLowerCase())}, +${pct(a.best.bonus)}${a.best.power ? `, power ${Math.round(a.best.power * 10) / 10}` : ''}${a.best.equipped ? ' (equipped)' : ' (in the stash)'}.` : '';
-  return `<div class="note tw-away"><h3>While you were away</h3><p>${hrs}${a.capped ? ' (the most it can count)' : ''}: your hero climbed ${a.floors} floor${a.floors === 1 ? '' : 's'} to floor ${a.to} and beat ${a.bosses} boss${a.bosses === 1 ? '' : 'es'}.${best}${a.capsUp ? ` ${CAPS_TXT}.` : ''}${unlockNames(a.unlocked).length ? ` New Focus upgrade${a.unlocked.length > 1 ? 's' : ''}: ${esc(unlockNames(a.unlocked).join(', '))}.` : ''}${a.waiting ? ` ${WAIT_TXT}` : ''}</p></div>`;
+  return `<div class="note tw-away"><h3>While you were away</h3><p>${hrs}${a.capped ? ' (the most it can count)' : ''}: your hero climbed ${a.floors} floor${a.floors === 1 ? '' : 's'} to floor ${a.to} and beat ${a.bosses} boss${a.bosses === 1 ? '' : 'es'}${a.focus ? ` (+${a.focus} Focus)` : ''}.${best}${a.capsUp ? ` ${CAPS_TXT}.` : ''}${unlockNames(a.unlocked).length ? ` New Focus upgrade${a.unlocked.length > 1 ? 's' : ''}: ${esc(unlockNames(a.unlocked).join(', '))}.` : ''}${a.waiting ? ` ${WAIT_TXT}` : ''}</p></div>`;
 }
 export const keysLabel = (n) => `${n} boss key${n === 1 ? '' : 's'}`;
 const badgeText = (g) => {

@@ -79,9 +79,9 @@ test('Second Breath and Thornmail use the lifesteal and thorns maths', () => {
 
 test('Forge Mastery stacks multiplicatively with Ancestral forge', () => {
   const it = { tier: 2, lvl: 0, rarity: 'common', aff: [] }, g = game(), c0 = G.forgeCost(g, 'reroll', it);
-  g.focusUp.mastery = 10; assert.equal(G.forgeCost(g, 'reroll', it), Math.ceil(40 * 1.35 ** 2 * 0.7));
-  g.talents.ancestral = 2; assert.equal(G.forgeCost(g, 'reroll', it), Math.ceil(40 * 1.35 ** 2 * 0.9 * 0.7)); assert.ok(G.forgeCost(g, 'reroll', it) < c0);
-  assert.equal(G.forgeCost(g, 'temper', { ...it, lvl: 2 }), Math.ceil(30 * 1.35 ** 2 * 1.15 ** 2 * 0.9 * 0.7));
+  g.focusUp.mastery = 10; assert.equal(G.forgeCost(g, 'reroll', it), Math.ceil(20 * 1.1 ** 2 * 0.7));
+  g.talents.ancestral = 2; assert.equal(G.forgeCost(g, 'reroll', it), Math.ceil(20 * 1.1 ** 2 * 0.9 * 0.7)); assert.ok(G.forgeCost(g, 'reroll', it) < c0);
+  assert.equal(G.forgeCost(g, 'temper', { ...it, lvl: 2 }), Math.ceil(15 * 1.1 ** 2 * 1.15 ** 2 * 0.9 * 0.7));
 });
 
 test('Treasure Sense lifts a boss drop one tier, only on a lucky roll', () => {
@@ -159,7 +159,7 @@ test('caps at each milestone: default rule and every override', () => {
 test('buying above the base max once raised, refused before', () => {
   const g = game({ focus: 1e9, bossBest: 20 }); for (let i = 0; i < 12; i++) G.buyFocus(g, 'iron'); assert.equal(g.focusUp.iron, 10); assert.equal(G.buyFocus(g, 'iron'), false);
   g.bossBest = 29; assert.equal(G.buyFocus(g, 'iron'), false, 'one boss short');
-  g.bossBest = 30; assert.equal(G.buyFocus(g, 'iron'), true); assert.equal(g.focusUp.iron, 11); const f = g.focus; assert.equal(G.focusCost('iron', 11), Math.ceil(20 * 1.25 ** 11)); G.buyFocus(g, 'iron'); assert.equal(f - g.focus, Math.ceil(20 * 1.25 ** 11));
+  g.bossBest = 30; assert.equal(G.buyFocus(g, 'iron'), true); assert.equal(g.focusUp.iron, 11); const f = g.focus; assert.equal(G.focusCost('iron', 11), Math.ceil(20 * 1.12 ** 11)); G.buyFocus(g, 'iron'); assert.equal(f - g.focus, Math.ceil(20 * 1.12 ** 11));
   for (let i = 0; i < 20; i++) G.buyFocus(g, 'iron'); assert.equal(g.focusUp.iron, 15);
   assert.equal(G.ensureGame({ game: { bossBest: 30, focusUp: { iron: 99 } } }).focusUp.iron, 15, 'a save is clamped to the raised cap'); assert.equal(G.ensureGame({ game: { bossBest: 30, focusUp: { iron: 14 } } }).focusUp.iron, 14, 'never lowered below the cap');
   assert.equal(G.ensureGame({ game: { bestFloor: 61, focusUp: { luck: 99 } } }).focusUp.luck, 20, 'an old save reads its caps from bestFloor');
@@ -232,4 +232,9 @@ test('cap rows: Lv x/y, Max for now, cap line, aria-labels', () => {
   for (const b of r.sec.match(/<button[^>]*>/g)) assert.match(b, /aria-label="[^"]+"/);
   assert.match(r.sec, /Gilded Keys/); assert.match(r.sec, /Echo/); assert.match(r.sec, /Keen Edge/); assert.match(r.sec, /Fortify/);
   assert.equal(V.capLine(game({ bossBest: 0 })), 'Next cap raise: floor 30 boss (+50% max levels)');
+});
+
+test('a boss kill pays Focus, scaled to its floor', () => {
+  const g = game({ floor: 10, stats: STRONG, focus: 0 }), s = G.advance(g, 60, () => 0.9, { stopAt: 11 });
+  assert.equal(s.bosses, 1); assert.equal(s.focus, Math.ceil(10 * G.CONFIG.bossFocus)); assert.equal(g.focus, 2);
 });

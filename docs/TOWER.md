@@ -34,7 +34,8 @@ You check in for 1 to 2 minutes after a session, spend points, and look at the c
 - **Idempotent:** every paid item is recorded by id in `game.paid`, so nothing ever pays twice. That includes re-sync, import and reload.
 
 ### Focus
-- A completed fast that reached the "counts after" hours pays 30 + 5 × whole hours over that minimum, capped at 80.
+- A completed fast that reached the "counts after" hours pays 60 + 10 × whole hours over that minimum, capped at 160. A 16 h fast on the default 12 h minimum pays 100.
+- Each boss kill pays ceil(floor × 0.2) Focus (floor 60: 12), so income keeps pace with forge costs.
 - It pays once per fast id.
 
 ### Boss Keys
@@ -99,37 +100,37 @@ The line under the battle panel and the canvas label name the trait ("Crypt: ene
 - **Log:** keep the last 5 drops for the "while you were away" note.
 
 ## Forge (Focus)
-Tap a gear slot to open the gear sheet: forge, lock, and the stash for that slot. Cost = base × 1.35^tier × (1 − 5% per Ancestral forge level) × (1 − 3% per Forge Mastery level).
+Tap a gear slot to open the gear sheet: forge, lock, and the stash for that slot. Cost = base × 1.1^tier × (1 − 5% per Ancestral forge level) × (1 − 3% per Forge Mastery level).
 | Action | Base | Effect |
 |---|---|---|
-| Reroll | 40 | Re-roll one affix you pick (no duplicates) |
-| Add an affix | 100 | One extra, once per item, up to rarity max + 1 |
-| Upgrade rarity | 160 | common → rare → epic, adds an affix, raises the base bonus |
-| Temper | 30 × 1.15^level | +1 item level, +5% base bonus each, no limit |
+| Reroll | 20 | Re-roll one affix you pick (no duplicates) |
+| Add an affix | 50 | One extra, once per item, up to rarity max + 1 |
+| Upgrade rarity | 80 | common → rare → epic, adds an affix, raises the base bonus |
+| Temper | 15 × 1.15^level | +1 item level, +20% base bonus each, no limit |
 
 ## Focus upgrades
 Costs are in Focus: ceil(base × grow^level). The first 5 are always open. The rest unlock when a boss floor has been beaten, tracked by `game.bossBest`.
 
 | Upgrade (save key) | Effect per level | Max | Cost | Unlocks |
 |---|---|---|---|---|
-| Stamina (`endurance`) | +10% Sweat from sessions | 5 | 30 × 1.4^L | open |
-| Precision | +2% crit chance | 20 | 30 × 1.25^L | open |
-| Luck | +2% epic drop chance | 10 | 40 × 1.3^L | open |
-| Iron Skin (`iron`) | −2% damage taken (multiplies Guard) | 10 | 20 × 1.25^L | open |
-| Quick Hands (`hands`) | +2% speed, after the Speed cap like gear | 10 | 20 × 1.25^L | open |
-| Warlord's Edge (`warlord`) | +3% damage to bosses (adds to Boss slayer) | 10 | 25 × 1.25^L | floor 10 boss |
-| Second Breath (`breath`) | +1% lifesteal (counts like the affix) | 5 | 30 × 1.3^L | floor 20 boss |
-| Thornmail (`thorn`) | +2% thorns (counts like the affix) | 10 | 30 × 1.25^L | floor 30 boss |
-| Forge Mastery (`mastery`) | −3% forge cost, multiplies Ancestral forge | 10 | 40 × 1.25^L | floor 40 boss |
-| Treasure Sense (`sense`) | +4% chance a boss drop is one tier higher | 5 | 40 × 1.35^L | floor 50 boss |
-| Key Ring (`ring`) | +1 key cap | 3 | 50 × 1.6^L | floor 60 boss |
-| Overkill (`overkill`) | +5% crit damage | 10 | 40 × 1.25^L | floor 70 boss |
-| Time Dilation (`dilation`) | +5 s boss timer | 4 | 60 × 1.4^L | floor 80 boss |
-| Ascendant (`ascendant`) | +1 soul per ascension | 3 | 100 × 1.8^L | floor 100 boss |
-| Fortify (`fortify`) | +3% Health | 10 | 20 × 1.2^L | floor 90 boss |
-| Keen Edge (`keen`) | +3% Attack | 10 | 20 × 1.2^L | floor 110 boss |
-| Gilded Keys (`gilded`) | +5% chance a paid session gives 1 extra key (cap 100%) | 5 | 80 × 1.35^L | floor 130 boss |
-| Echo (`echo`) | +3% chance a boss drops a second item (cap 30%) | 5 | 100 × 1.4^L | floor 150 boss |
+| Stamina (`endurance`) | +10% Sweat from sessions | 5 | 30 × 1.12^L | open |
+| Precision | +2% crit chance | 20 | 30 × 1.06^L | open |
+| Luck | +2% epic drop chance | 10 | 40 × 1.12^L | open |
+| Iron Skin (`iron`) | −2% damage taken (multiplies Guard) | 10 | 20 × 1.12^L | open |
+| Quick Hands (`hands`) | +2% speed, after the Speed cap like gear | 10 | 20 × 1.12^L | open |
+| Warlord's Edge (`warlord`) | +3% damage to bosses (adds to Boss slayer) | 10 | 25 × 1.12^L | floor 10 boss |
+| Second Breath (`breath`) | +1% lifesteal (counts like the affix) | 5 | 30 × 1.12^L | floor 20 boss |
+| Thornmail (`thorn`) | +2% thorns (counts like the affix) | 10 | 30 × 1.12^L | floor 30 boss |
+| Forge Mastery (`mastery`) | −3% forge cost, multiplies Ancestral forge | 10 | 40 × 1.12^L | floor 40 boss |
+| Treasure Sense (`sense`) | +4% chance a boss drop is one tier higher | 5 | 40 × 1.12^L | floor 50 boss |
+| Key Ring (`ring`) | +1 key cap | 3 | 50 × 1.12^L | floor 60 boss |
+| Overkill (`overkill`) | +5% crit damage | 10 | 40 × 1.12^L | floor 70 boss |
+| Time Dilation (`dilation`) | +5 s boss timer | 4 | 60 × 1.12^L | floor 80 boss |
+| Ascendant (`ascendant`) | +1 soul per ascension | 3 | 100 × 1.12^L | floor 100 boss |
+| Fortify (`fortify`) | +3% Health | 10 | 20 × 1.12^L | floor 90 boss |
+| Keen Edge (`keen`) | +3% Attack | 10 | 20 × 1.12^L | floor 110 boss |
+| Gilded Keys (`gilded`) | +5% chance a paid session gives 1 extra key (cap 100%) | 5 | 80 × 1.12^L | floor 130 boss |
+| Echo (`echo`) | +3% chance a boss drops a second item (cap 30%) | 5 | 100 × 1.12^L | floor 150 boss |
 
 - **Boss record:** `game.bossBest` is the highest boss floor ever beaten. It is set when a boss falls (live or offline) and survives ascension. Old saves start with the last multiple of 10 below `bestFloor`. A buy is refused while `bossBest` is under the upgrade's `need` (`focusOpen`).
 - **Unlock news:** `advance()` returns `unlocked` (ids a new record opened). The live loot card adds "New Focus upgrade: Thornmail" and the away summary (`away.unlocked`) says the same.
