@@ -11,7 +11,7 @@ const pct = (x) => `${Math.round(x * 1000) / 10}%`;
 const SLOT_NAME = { weapon: 'Weapon', armour: 'Armour', boots: 'Boots' }, STAT_NAME = { atk: 'Attack', hp: 'Health', spd: 'Speed' };
 
 /* ---------- HTML ---------- */
-const statVal = (g, stat, lv) => { const h = heroStats({ ...g, stats: { ...g.stats, [stat]: lv } }); return stat === 'spd' ? `${h.spd.toFixed(2)}/s` : fmt(h[stat]); };
+const statVal = (g, stat, lv) => { const h = heroStats({ ...g, stats: { ...g.stats, [stat]: lv } }); return stat === 'spd' ? `${h.spd.toFixed(2)}/s` : h[stat] < 100 ? h[stat].toFixed(1) : fmt(h[stat]); };   // a decimal under 100, so small gear gains show
 const spdMaxed = (g) => CONFIG.spd.base + CONFIG.spd.per * g.stats.spd >= CONFIG.spd.max;
 const GL = { sweat: '&#9889;', focus: '&#9670;', souls: '&#10022;' };
 const btnTxt = (max, gl, cost) => max ? 'Max' : `<span aria-hidden="true">${GL[gl]}</span> ${fmt(cost)}`;
@@ -26,6 +26,7 @@ function statRow(g, stat) {
     <button class="btn sm tw-buy tnum" data-act="buyStat" data-stat="${stat}" data-cost="${p.cost}" aria-label="${esc(p.label)}" ${p.off ? 'disabled' : ''}>${p.txt}</button></div>`;
 }
 const RCOL = { common: 'var(--muted)', rare: 'var(--blue-text)', epic: 'var(--purple-text)' };
+export { statVal };
 export const AFF_NAME = { lifesteal: 'Lifesteal', thorns: 'Thorns', critdmg: 'Crit damage', boss: 'Boss slayer', swift: 'Swift', guard: 'Guard', ward: 'Zone ward', train: 'Training' };
 const AFF_DESC = { lifesteal: 'Heal {v} of damage dealt', thorns: 'Reflect {v} of damage taken', critdmg: '+{v} crit damage', boss: '+{v} damage to bosses', swift: '+{v} speed', guard: '{v} less damage taken', ward: '+{v} damage on floors with an enemy trait', train: '+{v} Sweat from sessions (30% max)' };
 const affDesc = (a) => AFF_DESC[a.id].replace('{v}', pct(a.v));

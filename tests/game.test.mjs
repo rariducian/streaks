@@ -277,7 +277,7 @@ test('forge: add an affix once, up to max + 1; upgrade rarity adds one; temper i
   assert.equal(G.forge(g, 'armour', 'add', 0, lcg(4)), true); assert.equal(e.aff.length, 4); assert.equal(G.forgeBlock(e, 'add'), 'Already added one');
   const r = wear(g, 'boots', item('boots', 1, 'rare', [{ id: 'guard', v: 0.1 }, { id: 'swift', v: 0.1 }], { added: false })); G.forge(g, 'boots', 'add', 0, lcg(9)); assert.equal(r.aff.length, 3);
   const t = wear(g, 'boots', item('boots', 1, 'common', [])), base = t.bonus, f0 = g.focus; let last = 0;
-  for (let i = 1; i <= 12; i++) { const c = G.forgeCost(g, 'temper', t); assert.ok(c >= last); last = c; assert.equal(G.forge(g, 'boots', 'temper'), true); assert.equal(t.lvl, i); close(t.bonus, base * (1 + 0.05 * i)); }
+  for (let i = 1; i <= 12; i++) { const c = G.forgeCost(g, 'temper', t); assert.ok(c >= last); last = c; assert.equal(G.forge(g, 'boots', 'temper'), true); assert.equal(t.lvl, i); close(t.bonus, base * (1 + 0.2 * i)); }
   assert.ok(f0 > g.focus);
   const p = game({ focus: 1 }); wear(p, 'boots', item('boots', 1, 'common')); assert.equal(G.forge(p, 'boots', 'temper'), false); assert.equal(p.gear.boots.lvl, 0);
   assert.equal(G.forge(g, 'weapon', 'nope'), false);
@@ -285,7 +285,7 @@ test('forge: add an affix once, up to max + 1; upgrade rarity adds one; temper i
 
 test('tempered and upgraded items raise hero stats', () => {
   const g = game({ focus: 1e5 }); wear(g, 'weapon', item('weapon', 1, 'common')); const a0 = G.heroStats(g).atk;
-  G.forge(g, 'weapon', 'temper'); close(G.heroStats(g).atk / a0, 1.0525 / 1.05);
+  G.forge(g, 'weapon', 'temper'); close(G.heroStats(g).atk / a0, 1.06 / 1.05);
 });
 
 test('zone traits: bands, laps and the text line', () => {
