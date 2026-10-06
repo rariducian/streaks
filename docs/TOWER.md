@@ -40,7 +40,7 @@ You check in for 1 to 2 minutes after a session, spend points, and look at the c
 ### Boss Keys
 - A boss needs a key. Normal floors never do.
 - **Earned by training:** each paid session gives 1 (the first 2 sessions on a date, minimum days count, same as Sweat) and each level-up gives 1 more. Paid through `syncRewards`, once each, recorded in `game.paid` as `ks:<session id>` and `ke:<event id>`.
-- **Cap:** 5 held (`CONFIG.keyCap`). Keys over the cap are lost, but still marked paid.
+- **Cap:** 5 held (`CONFIG.keyCap`), +1 per Key Ring level (`keyCap(g)`). Keys over the cap are lost, but still marked paid.
 - **Welcome grant:** the first sync pays history at most 3 keys in total (`welcomeKeys`, flag `kw`), so an old save does not arrive with a pile. Saves from before keys also start with 1 (`migrateKeys`).
 - **At the door:** `advance` on a boss floor with no key (and none already spent on it) waits: no tries, no Grit, time passes with no progress. `game.waiting` records it, `atDoor(g)` computes it. Offline catch-up follows the same rules and the away summary says "Waiting at the boss door. Train to earn a key."
 - **Spending:** the key goes on the first try at that boss (`game.keyFor` = the boss floor). Retries of the same boss are free, so a lost fight never burns a second key. A win clears `keyFor`. Ascending clears it too.
@@ -99,7 +99,7 @@ The line under the battle panel and the canvas label name the trait ("Crypt: ene
 - **Log:** keep the last 5 drops for the "while you were away" note.
 
 ## Forge (Focus)
-Tap a gear slot to open the gear sheet: forge, lock, and the stash for that slot. Cost = base × 1.35^tier × (1 − 5% per Ancestral forge level).
+Tap a gear slot to open the gear sheet: forge, lock, and the stash for that slot. Cost = base × 1.35^tier × (1 − 5% per Ancestral forge level) × (1 − 3% per Forge Mastery level).
 | Action | Base | Effect |
 |---|---|---|
 | Reroll | 40 | Re-roll one affix you pick (no duplicates) |
@@ -108,13 +108,29 @@ Tap a gear slot to open the gear sheet: forge, lock, and the stash for that slot
 | Temper | 30 × 1.15^level | +1 item level, +5% base bonus each, no limit |
 
 ## Focus upgrades
-Costs are in Focus.
+Costs are in Focus: ceil(base × grow^level). The first 5 are always open. The rest unlock when a boss floor has been beaten, tracked by `game.bossBest`.
 
-| Upgrade | Effect | Max | Cost |
-|---|---|---|---|
-| Stamina (save key `endurance`) | +10% Sweat from sessions per level | 5 | 30 × 1.4^L |
-| Precision | +2% crit chance | 20 | 30 × 1.25^L |
-| Luck | +2% epic drop chance | 10 | 40 × 1.3^L |
+| Upgrade (save key) | Effect per level | Max | Cost | Unlocks |
+|---|---|---|---|---|
+| Stamina (`endurance`) | +10% Sweat from sessions | 5 | 30 × 1.4^L | open |
+| Precision | +2% crit chance | 20 | 30 × 1.25^L | open |
+| Luck | +2% epic drop chance | 10 | 40 × 1.3^L | open |
+| Iron Skin (`iron`) | −2% damage taken (multiplies Guard) | 10 | 20 × 1.25^L | open |
+| Quick Hands (`hands`) | +2% speed, after the Speed cap like gear | 10 | 20 × 1.25^L | open |
+| Warlord's Edge (`warlord`) | +3% damage to bosses (adds to Boss slayer) | 10 | 25 × 1.25^L | floor 10 boss |
+| Second Breath (`breath`) | +1% lifesteal (counts like the affix) | 5 | 30 × 1.3^L | floor 20 boss |
+| Thornmail (`thorn`) | +2% thorns (counts like the affix) | 10 | 30 × 1.25^L | floor 30 boss |
+| Forge Mastery (`mastery`) | −3% forge cost, multiplies Ancestral forge | 10 | 40 × 1.25^L | floor 40 boss |
+| Treasure Sense (`sense`) | +4% chance a boss drop is one tier higher | 5 | 40 × 1.35^L | floor 50 boss |
+| Key Ring (`ring`) | +1 key cap | 3 | 50 × 1.6^L | floor 60 boss |
+| Overkill (`overkill`) | +5% crit damage | 10 | 40 × 1.25^L | floor 70 boss |
+| Time Dilation (`dilation`) | +5 s boss timer | 4 | 60 × 1.4^L | floor 80 boss |
+| Ascendant (`ascendant`) | +1 soul per ascension | 3 | 100 × 1.8^L | floor 100 boss |
+
+- **Boss record:** `game.bossBest` is the highest boss floor ever beaten. It is set when a boss falls (live or offline) and survives ascension. Old saves start with the last multiple of 10 below `bestFloor`. A buy is refused while `bossBest` is under the upgrade's `need` (`focusOpen`).
+- **Unlock news:** `advance()` returns `unlocked` (ids a new record opened). The live loot card adds "New Focus upgrade: Thornmail" and the away summary (`away.unlocked`) says the same.
+- **Cost of everything** (all new ones at max, without Precision) is about 9,800 Focus, so about 2,000 buys the cheap survival upgrades and a few of the later ones, not the lot.
+- **Sense:** rolls one extra die per boss kill, only when the level is above 0.
 
 ## Soul tree
 Souls are earned on ascend (floor(√ highest floor)). `game.souls` is the total earned, `game.soulsSpent` what is in talents, so old saves start with all their souls unspent. Cost = ceil(base × grow^level).
@@ -133,7 +149,7 @@ Refund all talents is free, once per ascension (comes back when you ascend).
 
 ## Ascension
 - **Needs:** 1 Ascend token (from a real level-up) and highest floor this run ≥ 20.
-- **Gives:** floor(√(highest floor this run)) Souls, kept forever.
+- **Gives:** floor(√(highest floor this run)) Souls, plus 1 per Ascendant level. Kept forever.
 - **Resets:** floor to 1 (or the Head start floor) and gear, except the single best item (highest power), which stays equipped. Locked items stay too. Unlocked stash items are scrapped for Sweat.
 - **Keeps:** stat levels, Focus upgrades, Sweat, Focus, Souls and that best gear item.
 - **Souls:** spent in the Soul tree.
@@ -169,7 +185,7 @@ Each move has a 3 piece set (weapon, armour, boots) in `CONFIG.sets`: Vanguard (
 - **Hero:** with 3 of a set worn the doll gets a set-coloured trim (4th entry of the looks array, `SET_COLOR` in sprites.js, palette roles `1` to `8`): sash, hem, shoulder, boot cuffs and weapon guard. Auto-equip still goes by power only, so wear a set piece from the inventory if you want the bonus.
 
 ## Tuning
-`node tools/tower-sim.mjs` simulates a daily trainer (greedy buyer, a level-up every 10 days that gives a set piece (`LEVELUP=n`, `SETMOVES=a,b`), 1 planned rest day a week (`REST=0` for none), a weekly bounty claimed when done) and a player who never trains (they only hold the 3 welcome keys). The trainer earns keys from sessions and level-ups and also adds 60 Focus a day and spends it greedily on the Forge. See the sim output for the current numbers; the elite floors are the late walls.
+`node tools/tower-sim.mjs` simulates a daily trainer (greedy buyer, a level-up every 10 days that gives a set piece (`LEVELUP=n`, `SETMOVES=a,b`), 1 planned rest day a week (`REST=0` for none), a weekly bounty claimed when done) and a player who never trains (they only hold the 3 welcome keys). The trainer earns keys from sessions and level-ups and also adds 60 Focus a day and spends it greedily on the Forge and the combat Focus upgrades (judged by their gain in the weakest survival or boss-timer margin); Forge Mastery and Treasure Sense take what is left, Key Ring and Ascendant are never bought (no key pressure, no ascending). The old Stamina, Precision and Luck are not bought. It prints `SUMMARY` lines with the floor at days 7, 30 and 60 and the longest stall. See the sim output for the current numbers; the elite floors and the boss at 110 are the late walls.
 
 ## Tab UI (phone first)
 1. **Battle panel:** a pixel canvas with the hero on the left and the enemy on the right. The badge reads like "Crypt · Floor 34 · boss in 6", shortened to "Crypt · F34 · boss 6" when the panel is under 340 px or the text would overflow. The trait line sits under the panel. The canvas label names the zone and enemy ("Crypt, floor 34: your hero fights a ghost"). It uses `image-rendering: pixelated`. See "Visual fight" and "Zones" below. With reduced motion it shows still frames: no lunges, floats, bobbing or flicker, and bars step instantly.
@@ -177,7 +193,7 @@ Each move has a 3 piece set (weapon, armour, boots) in `CONFIG.sets`: Vanguard (
 3. **Currency row:** Sweat, Focus, Souls. Tiles carry plain labels for VoiceOver and the glyphs are hidden from it.
 4. **Stats:** 3 rows (level, current value, next value, cost button). The button is disabled when you can't afford it. Buying updates the rows in place (`refreshTowerUi`), so the canvas is never rebuilt. Buy buttons have labels like "Upgrade Attack to level 4 for 29 Sweat".
 5. **Gear:** 3 slots (rarity colour, bonus, power, affix chips). Tap one for the gear sheet. A stash line sits underneath, with an **Inventory** button (see "Inventory").
-6. **Focus upgrades:** 3 rows. 6b. **Soul tree:** 8 rows like the stat rows, plus a refund row.
+6. **Focus upgrades:** every open upgrade as a normal row, then the next 2 locked ones as dimmed rows ("Beat the floor 30 boss to unlock: Thornmail", label "Locked. Beat the floor 30 boss to unlock Thornmail"). The rest stay hidden. Rows are `role=group` with a label, buttons are 44 px high. `refreshTowerUi` patches rows in place and rebuilds the list only when the open or locked set changes (after a boss), keeping button focus. 6b. **Soul tree:** 8 rows like the stat rows, plus a refund row.
 7. **Ascend card:** only when a token is held.
 8. **"How you earn" footnote:** one line per source.
 
@@ -232,7 +248,7 @@ The hero is a paper doll (`heroMap(frame, looks)` in sprites.js): cape (behind),
 
 ## Data
 - Save in `state.game`, created lazily by `ensureGame(state)`.
-- **Fields:** `sweat`, `focus`, `souls`, `tokens`, `stats {atk, hp, spd}`, `focusUp {endurance, precision, luck}`, `floor`, `runMax`, `bestFloor`, `grit`, `keys`, `keyFor`, `waiting`, `kw`, `gear {weapon, armour, boots}` (items: `id, slot, tier, rarity, bonus, lvl, aff[{id,v}], lock, added, look`; `look` is derived and refilled on load), `stash[]`, `talents{}`, `soulsSpent`, `respecUsed`, `seq`, `drops[]`, `paid{}`, `lastTick`, `away`.
+- **Fields:** `sweat`, `focus`, `souls`, `tokens`, `stats {atk, hp, spd}`, `focusUp {endurance, precision, luck, iron, hands, warlord, breath, thorn, mastery, sense, ring, overkill, dilation, ascendant}`, `floor`, `runMax`, `bestFloor`, `bossBest`, `grit`, `keys`, `keyFor`, `waiting`, `kw`, `gear {weapon, armour, boots}` (items: `id, slot, tier, rarity, bonus, lvl, aff[{id,v}], lock, added, look`; `look` is derived and refilled on load), `stash[]`, `talents{}`, `soulsSpent`, `respecUsed`, `seq`, `drops[]`, `paid{}`, `lastTick`, `away`.
 - Export and import carry it automatically.
 
 ## Out of scope for v1
@@ -240,3 +256,6 @@ Sound, more than one hero, achievements.
 
 ## Tuning log (rest, bounty, sets)
 With the trainer taking 1 rest day a week the longest stall rose to 6 days, so Attack and Health upgrade growth went from 1.04 to 1.038. Trainer: floor 51 at day 7, 85 at day 30, 108 at day 60, longest stall 4 days, 8 of 9 bounties claimed. Non-trainer stuck at 15. The sim trainer rarely has 2 pieces of a set worn in 60 days, so sets are a slow-burn bonus.
+
+## Tuning log (Focus tree)
+New Focus upgrades with the trainer spending 60 Focus a day: floor 54 at day 7 (main 51), 94 at day 30 (main 85), 110 at day 60 (main 108), longest stall 4 days. Non-trainer still stuck at 15. Base costs started at 40 to 200 and were halved after the first pass left the trainer stalling 6 to 8 days at the floor 110 boss; stalls near that wall are knife-edge (4 to 9 days when Focus a day varies 45 to 75), and the main build also stalls 9 to 11 days at floors 110 to 117 once the sim runs past day 60. Only the new `focusUp` entries were added, no other CONFIG value changed.

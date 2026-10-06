@@ -433,7 +433,8 @@ body.fv-lock{overflow:hidden}
 .tw-nm{font-weight:650;font-size:0.941rem}
 .tw-lv{font-size:0.706rem;font-weight:600;color:var(--muted);margin-left:4px}
 .tw-sub{font-size:0.794rem;color:var(--muted);margin-top:1px}
-.tw-buy{flex:none;min-width:78px;text-align:center}
+.tw-buy{flex:none;min-width:78px;min-height:44px;text-align:center}
+.tw-lock{opacity:.6;min-height:44px}.tw-lock .tw-nm{font-weight:600}.tw-lock .tw-pad{font-size:0.882rem}
 .tw-how{padding:12px 14px 4px}
 .tw-how p{margin:0 0 10px;font-size:0.824rem;color:var(--muted)}
 .tw-how b{color:var(--text)}

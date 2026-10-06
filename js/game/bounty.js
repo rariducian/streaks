@@ -2,7 +2,7 @@
 // Kinds: days (train N days), best (beat your best on a move), level (level up any move), full (full sessions, not minimum, on N days), fast (N fasts past your minimum).
 import { MOVES } from '../data.js';
 import { todayStr, addDays, weekStartOf } from '../logic.js';
-import { CONFIG, ensureGame, rollDrop, giveDrop } from './engine.js';
+import { CONFIG, ensureGame, rollDrop, giveDrop, keyCap } from './engine.js';
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const dateOf = (iso) => todayStr(new Date(iso));
@@ -71,6 +71,6 @@ export function claimBounty(state, today = todayStr(), rng = Math.random) {
   const st = bountyStatus(state, today); if (!st || !st.claimable) return null;
   const g = ensureGame(state); g.bounty.claimed = true;
   const item = giveDrop(g, rollDrop(g, g.floor, rng, { min: CONFIG.bounty.minRarity })), k0 = g.keys;
-  g.keys = Math.min(CONFIG.keyCap, g.keys + CONFIG.bounty.keys);
+  g.keys = Math.min(keyCap(g), g.keys + CONFIG.bounty.keys);
   return { item, keys: g.keys - k0 };
 }
