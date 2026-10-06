@@ -20,7 +20,7 @@ test('todayStr uses local date parts', () => {
 
 test('defaultState has every move', () => {
   const s = fresh();
-  for (const id of Object.keys(MOVES)) assert.deepEqual(s.moves[id], { level: 0, target: L.rangeOf(id, 0)[0], calibrated: false, missStreak: 0 });
+  for (const id of Object.keys(MOVES)) assert.deepEqual(s.moves[id], { level: 0, target: L.rangeOf(id, 0, 40)[0], calibrated: false, missStreak: 0 });
   assert.equal(s.version, 2);
   assert.equal(s.settings.workSec, 40);
   assert.equal(s.settings.fastMinHours, 12);
@@ -43,8 +43,8 @@ test('calibration placement', () => {
   assert.deepEqual(L.placeFromCalibration(s, 'hpush', 0, 3), { level: 0, target: 6, tooEasy: false, tooHard: false });
   const r = L.placeFromCalibration(s, 'hpush', 2, 3);
   assert.equal(r.tooHard, true); assert.equal(r.target, 6);
-  // uses the level range: archer is [6,12], one-arm is [3,8]
-  assert.deepEqual(L.placeFromCalibration(s, 'hpush', 4, 30), { level: 4, target: 12, tooEasy: true, tooHard: false });
+  // uses the level range: archer is [6,12] before the time fit, one-arm is [3,8]
+  assert.deepEqual(L.placeFromCalibration(s, 'hpush', 4, 30), { level: 4, target: 10, tooEasy: true, tooHard: false });   // archer max 12 is fitted to 10 at 40 s
   const top = L.placeFromCalibration(s, 'hpush', 6, 40);
   assert.equal(top.tooEasy, false); assert.equal(top.target, 8);
   assert.equal(L.placeFromCalibration(s, 'row', 4, 40).tooEasy, false);
@@ -148,7 +148,7 @@ test('rangeOf: level range, move range, sec cap', () => {
   assert.deepEqual(L.rangeOf('core', 4), [10, 30]);
   assert.deepEqual(L.rangeOf('core', 4, 30), [10, 30]);
   assert.deepEqual(L.rangeOf('core', 4, 20), [10, 20]);
-  assert.deepEqual(L.rangeOf('row', 0, 30), [8, 15], 'cap applies to sec moves only');
+  assert.deepEqual(L.rangeOf('row', 0, 30), [8, 10], 'rep moves are fitted to the work time');
   for (const m of Object.values(MOVES)) m.levels.forEach((_, i) => { const [a, b] = L.rangeOf(m.id, i, 30); assert.ok(a <= b, `${m.id}[${i}]`); });
 });
 
@@ -197,12 +197,12 @@ test('progression: levelUp when every set reaches range max', () => {
   assert.equal(r.state.moves.hpush.target, 6);
   assert.ok(r.events.some((e) => e.type === 'levelUp' && e.level === 1));
   // new level range min: archer is [6,12]; pseudo-planche [5,12]; one-arm [3,8]
-  const a = finish(withMove(s, 'hpush', { level: 4, target: 10 }), sets('hpush', 4, 12));
+  const a = finish(withMove(s, 'hpush', { level: 4, target: 10 }), sets('hpush', 4, 10));
   assert.equal(a.state.moves.hpush.level, 5); assert.equal(a.state.moves.hpush.target, 5);
   const b = finish(withMove(s, 'hpush', { level: 5, target: 10 }), sets('hpush', 5, 12));
   assert.equal(b.state.moves.hpush.level, 6); assert.equal(b.state.moves.hpush.target, 3);
   // not every set at max: no level up
-  const c = finish(withMove(s, 'hpush', { level: 4, target: 10 }), [...sets('hpush', 4, 12, 4), { moveId: 'hpush', level: 4, reps: 11 }]);
+  const c = finish(withMove(s, 'hpush', { level: 4, target: 10 }), [...sets('hpush', 4, 10, 4), { moveId: 'hpush', level: 4, reps: 9 }]);
   assert.equal(c.state.moves.hpush.level, 4);
 });
 
@@ -239,14 +239,14 @@ test('progression: levelDown after 2 sessions with mean below range min', () => 
   assert.equal(r.state.moves.hpush.target, 10, 'the target is not lowered by one bad session');
   r = finish(r.state, sets('hpush', 2, 3));
   assert.equal(r.state.moves.hpush.level, 1);
-  assert.equal(r.state.moves.hpush.target, Math.round((6 + 15) / 2));
+  assert.equal(r.state.moves.hpush.target, Math.round((6 + 14) / 2));   // deficit push-up [6,15] fitted to [6,14]
   assert.equal(r.state.moves.hpush.missStreak, 0);
   assert.ok(r.events.some((e) => e.type === 'levelDown'));
   // level down uses the new level's range: from archer [6,12] to diamond/feet... level 3 has the move range
   const t = withMove(fresh(), 'hpush', { level: 5, target: 8, calibrated: true, missStreak: 1 });
   const d = finish(t, sets('hpush', 5, 2));
   assert.equal(d.state.moves.hpush.level, 4);
-  assert.equal(d.state.moves.hpush.target, Math.round((6 + 12) / 2));
+  assert.equal(d.state.moves.hpush.target, Math.round((6 + 10) / 2));   // archer [6,12] fitted to [6,10]
 });
 
 test('progression: levelDown never goes below 0', () => {
@@ -506,7 +506,8 @@ test('moveProgress and recentEvents', () => {
   assert.equal(h.levelName, MOVES.hpush.levels[1].name);
   assert.equal(h.levelsTotal, 7);
   assert.equal(h.pct, Math.round((2 / 7) * 100));
-  assert.deepEqual(h.range, [6, 15]);
+  assert.deepEqual(h.range, [6, 14]);
+  assert.equal(h.target, 14, 'target clamped to the fitted max');
   assert.deepEqual(L.moveProgress(withMove(fresh(), 'hpush', { level: 6, target: 8 })).find((x) => x.moveId === 'hpush').range, [3, 8]);
   assert.equal(p.find((x) => x.moveId === 'row').levelsTotal, 5);
   assert.equal(L.moveProgress(L.setPullupBar(s, true)).find((x) => x.moveId === 'row').levelsTotal, 8);
@@ -602,7 +603,7 @@ test('migrate: version, settings, new moves', () => {
   assert.equal(m.settings.workSec, 40);
   assert.equal(m.settings.pullupBar, true);
   assert.deepEqual(m.moves.hamcurl, { level: 0, target: 8, calibrated: false, missStreak: 0 });
-  assert.deepEqual(m.moves.calf, { level: 0, target: 12, calibrated: false, missStreak: 0 });
+  assert.deepEqual(m.moves.calf, { level: 0, target: 8, calibrated: false, missStreak: 0 });
   assert.equal(m.rotationIndex, 2);
   assert.equal(L.migrate({ ...v1(), settings: { workSec: 45 } }).settings.workSec, 45, 'keeps an existing workSec');
 });
@@ -610,7 +611,7 @@ test('migrate: version, settings, new moves', () => {
 test('migrate: hinge and row level maps and calibration', () => {
   const m = L.migrate(v1());
   assert.equal(m.moves.hinge.level, 1); assert.equal(m.moves.hinge.calibrated, true);
-  assert.equal(m.moves.hinge.target, 12, 'clamped into the new level range [8,12]');
+  assert.equal(m.moves.hinge.target, 10, 'clamped into the new level range [8,12], fitted to [8,10]');
   assert.equal(m.moves.row.level, 6); assert.equal(m.moves.row.calibrated, true);
   assert.equal(m.moves.row.target, 8, 'clamped into the new level range [3,8]');
   const hinge = (lv) => L.migrate({ ...v1(), moves: { hinge: { level: lv, target: 10, calibrated: true, missStreak: 1 } } }).moves.hinge;
