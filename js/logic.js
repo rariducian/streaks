@@ -11,6 +11,7 @@ const pad = (n) => String(n).padStart(2, '0');
 export function todayStr(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
+export const monthOf = (d = new Date()) => todayStr(d instanceof Date ? d : new Date(d)).slice(0, 7);   // 'YYYY-MM' in local time
 const toDate = (v) => (v instanceof Date ? v : new Date(v));
 const dayNum = (s) => {
   const [y, m, d] = s.split('-').map(Number);

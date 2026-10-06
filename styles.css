@@ -527,3 +527,9 @@ body.fv-lock{overflow:hidden}
 .inv-sp{display:flex;align-items:center;max-width:100%;font-size:0.588rem;font-weight:700;color:var(--text);margin-top:2px;white-space:nowrap}
 .inv-sp .tw-sd{width:8px;height:8px;margin-right:3px}
 .inv-sc{font-size:0.735rem}
+.recap{background:var(--card);border-radius:20px;padding:14px}
+.rc-top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
+.rc-top select{background:var(--bg);border:0;border-radius:10px;padding:8px 10px;font-size:0.882rem;max-width:210px}
+.rc-prev{border-radius:14px;overflow:hidden;background:var(--bg);aspect-ratio:1080/1350}
+.rc-btns{display:flex;gap:10px;margin-top:12px}.rc-btns .btn{flex:1;padding:13px 10px}
+.recap .btn.soft{background:var(--bg)}

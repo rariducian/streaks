@@ -4,7 +4,7 @@ import {
   todayStr, addDays, defaultState, sessionPlan, placeFromCalibration, applyCalibration, finishSession,
   trainingDates, fastingDates, computeStreak, heatmap, runningFast, startFast, endFast, editFast,
   deleteFast, fastStage, fastStats, moveTrend, moveProgress, recentEvents, growthOffer,
-  acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals, restFn, setRestDays, MAX_REST_DAYS
+  acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals, restFn, setRestDays, MAX_REST_DAYS, monthOf
 } from './logic.js';
 import { load, save, exportJSON, importJSON, normalise, STORAGE_KEY } from './store.js';
 import { migrate } from './logic.js';
@@ -12,6 +12,7 @@ import { ensurePersist, idbStore, listSnaps, snapshot, restoreOffer, importConfi
 import { CONFIG, ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, forge, forgeCost, toggleLock, equip, findItem, atDoor, fightFloor, readyBoss } from './game/engine.js';
 import { viewTower, mountTower, unmountTower, towerMounted, refreshTowerUi, gearSheet, invSheet, invPatch, mountInv, unmountInv, newInv, equipMsg, heroHit, closeLoot, keysLabel, AFF_NAME, showChest } from './game/view.js';
 import { ensureBounty, bountyStatus, bountyShort, bountyText, claimBounty } from './game/bounty.js';
+import { monthRecap, recapMonths, drawRecap, summaryText, monthName, monthLabel } from './recap.js';
 
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -186,6 +187,13 @@ function bountyLine() {
   const st = bountyStatus(state, todayStr()); if (!st || st.claimed) return '';
   return `<div class="section keysec"><button class="bountyline" data-act="toTower" aria-label="${esc(`Weekly bounty: ${bountyText(st.b)}, ${st.now} of ${st.target}${st.claimable ? ', ready to claim' : ''}. Opens the Tower`)}"><span>${st.claimable ? 'Bounty ready: claim your chest' : `Bounty: ${esc(bountyShort(st))}`}</span><span class="chev" aria-hidden="true">&rsaquo;</span></button></div>`;
 }
+// First 3 days of a month: a line pointing at last month's recap (only if last month has something in it).
+function recapLine(now) {
+  if (now.getDate() > 3) return '';
+  const ym = monthOf(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  if (!recapMonths(state, now).includes(ym)) return '';
+  return `<div class="section keysec"><button class="bountyline" data-act="recapOpen" data-ym="${ym}" aria-label="${esc(`Your ${monthName(ym)} recap is ready. Opens Progress`)}"><span>Your ${esc(monthName(ym))} recap is ready</span><span class="chev" aria-hidden="true">&rsaquo;</span></button></div>`;
+}
 function viewToday() {
   const today = todayStr(), now = new Date();
   const trDates = trainingDates(state), fsDates = fastingDates(state, now);
@@ -197,7 +205,7 @@ function viewToday() {
   const fsPct = fs.doneToday ? 1 : run ? Math.min(1, fHrs / minH) : 0;
   const fsMeta = fs.doneToday ? 'Counted today' : run ? `${fmtH(fHrs)} of ${minH}h` : 'No fast yet today';
   const done = tr.doneToday;
-  let html = `${sessionHero(done)}${keyChip()}${bountyLine()}
+  let html = `${sessionHero(done)}${recapLine(now)}${keyChip()}${bountyLine()}
   <div class="section"><div class="rings">${streakCard({ label: 'Training', st: tr, dates: trDates, pct: done ? 1 : 0, color: 'var(--green)', meta: done ? 'Done today' : 'Not trained yet', now })}${streakCard({ label: 'Fasting', st: fs, dates: fsDates, pct: fsPct, color: 'var(--purple)', meta: fsMeta, now, attr: 'data-fring' })}</div></div>`;
   if (!run) html += `<div class="section"><h2 class="title"><button class="titlebtn" data-act="tab" data-tab="fast">Fast <span class="chev" aria-hidden="true">&rsaquo;</span></button></h2>
    <button class="fastchip" data-act="tab" data-tab="fast"><div class="poster fast">FAST</div><div><div class="t">Start a fast</div><div class="small muted">Goal ${state.settings.fastGoalHours}h</div></div></button></div>`;
@@ -368,13 +376,53 @@ function viewFitness() {
   ${repCard(today)}
   <div class="section"><h2 class="title">Progress by move</h2><p class="chartsum">Your place on each ladder. Steps up are level-ups.</p><div class="trends">${moveTrend(state, today, 8).map(trendCard).join('')}</div></div>`;
 }
+/* ---------- monthly recap ---------- */
+// The card is drawn on demand (Progress tab only) and cached by month and a signature of its data, so a re-render never redraws it.
+let recapYm = null;
+const recapCache = new Map();
+function recapFor(ym) {
+  const r = monthRecap(state, ym, new Date()), g = state.game, sig = JSON.stringify([r, g && g.floor, g && g.gear]);
+  let e = recapCache.get(ym);
+  if (!e || e.sig !== sig) {
+    const cv = document.createElement('canvas'); drawRecap(cv, r, state);
+    cv.setAttribute('role', 'img'); cv.setAttribute('aria-label', summaryText(r)); cv.style.cssText = 'width:100%;height:auto;display:block';
+    e = { sig, cv, r }; recapCache.set(ym, e);
+  }
+  return e;
+}
+const recapSel = (months) => (months.includes(recapYm) ? recapYm : months[0]);
+function recapSection() {
+  const months = recapMonths(state, new Date()), ym = recapSel(months);
+  return `<div class="section" id="recap"><h2 class="title">Monthly recap</h2><div class="recap"><div class="rc-top"><label for="rcm" class="muted">Month</label>
+    <select id="rcm" data-change="recapMonth">${months.map((m) => `<option value="${m}" ${m === ym ? 'selected' : ''}>${esc(monthLabel(m))}</option>`).join('')}</select></div>
+    <div class="rc-prev" id="recap-prev"></div>
+    <div class="rc-btns"><button class="btn" data-act="recapShare" data-ym="${ym}" aria-label="${esc(`Share ${monthLabel(ym)} recap as an image`)}">Share</button><button class="btn soft" data-act="recapSave" data-ym="${ym}" aria-label="${esc(`Save ${monthLabel(ym)} recap as an image`)}">Save image</button></div></div></div>`;
+}
+function mountRecap() {
+  const host = $('#recap-prev'); if (!host) return;
+  try { host.replaceChildren(recapFor(recapSel(recapMonths(state, new Date()))).cv); } catch (e) { host.innerHTML = '<div class="empty">Could not draw the recap.</div>'; }
+}
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+const recapBlob = (ym) => new Promise((res) => recapFor(ym).cv.toBlob(res, 'image/png'));
+async function recapOut(ym, share) {
+  let blob; try { blob = await recapBlob(ym); } catch (e) { blob = null; }
+  if (!blob) { toast('Could not make the image.'); return; }
+  const name = `streaks-recap-${ym}.png`;
+  try {
+    const file = new File([blob], name, { type: 'image/png' });
+    if (share && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: `streaks ${monthLabel(ym)} recap` }); return; }
+    saveBlob(blob, name); if (!share) toast('Image saved.');
+  } catch (e) { if (!(e && e.name === 'AbortError')) toast('Could not share. Try Save image.'); }
+}
 function viewProgress() {
   const today = todayStr();
   const tdates = trainingDates(state), fdates = fastingDates(state);
   const ev = recentEvents(state, 10);
   const trSt = computeStreak(tdates, today, restFn(state.settings)), fsSt = computeStreak(fdates, today);
   const trN = daysIn(tdates, 7, today), fsN = daysIn(fdates, 7, today);
-  return `<div class="section"><h2 class="title">Highlights</h2><div class="feed">${ev.map((e) => { const [c, ic, t] = evLabel(e); return `<div class="ev"><div class="bd ${c}">${ic}</div><div><div>${t}</div><div class="when">${esc(dmy(new Date(e.at)))}</div></div></div>`; }).join('') || '<div class="empty">Your level-ups and personal bests will show here.</div>'}</div></div>
+  return `${recapSection()}<div class="section"><h2 class="title">Highlights</h2><div class="feed">${ev.map((e) => { const [c, ic, t] = evLabel(e); return `<div class="ev"><div class="bd ${c}">${ic}</div><div><div>${t}</div><div class="when">${esc(dmy(new Date(e.at)))}</div></div></div>`; }).join('') || '<div class="empty">Your level-ups and personal bests will show here.</div>'}</div></div>
   <div class="section"><h2 class="title">Consistency</h2>
     <div class="heat"><div class="hh"><span>Training</span><span class="muted">Best ${trSt.longest}</span></div><p class="chartsum">${trN} of the last 7 days.</p>${heatSvg(tdates, 'var(--green)', 'Training')}
     <div class="legend"><span><i style="background:var(--green)"></i>Trained</span><span><i style="background:var(--restday)"></i>Planned rest day</span><span><i style="background:var(--frozen)"></i>Streak freeze used</span></div></div>
@@ -451,6 +499,7 @@ function render() {
   if (tab === 'tower') { syncRewards(state); if (!live || !readyBoss(state, live)) { offlineCatchUp(state); } }
   v.innerHTML = tab === 'fast' ? viewFast() : tab === 'progress' ? viewProgress() : tab === 'fitness' ? viewFitness() : tab === 'tower' ? viewTower(state) : viewToday();
   renderSheet();
+  if (tab === 'progress') mountRecap();
   if (tab === 'tower' && !sess && !sheet) mountTower(state, save, live && ensureGame(state).floor === live ? { live, tone: liveTone } : {}); else unmountTower();
 }
 
@@ -796,6 +845,9 @@ const act = {
     if (!(await ask({ title: 'Ascend now?', message: 'Your floor resets (talents like Head start can raise it). You keep your best gear item, locked items, stats, Focus upgrades and currencies, and gain souls to spend in the Soul tree.', confirmLabel: 'Ascend' }))) return;
     const n = ascend(g); save(state); render(); toast(`Ascended. +${n} souls.`);
   },
+  recapOpen: (el) => { recapYm = el.dataset.ym; tab = 'progress'; sheet = null; render(); const r = $('#recap'); if (r) r.scrollIntoView(); },
+  recapShare: (el) => recapOut(el.dataset.ym, true),
+  recapSave: (el) => recapOut(el.dataset.ym, false),
   form: (el) => openForm(el.dataset.move, Number(el.dataset.level), el)
 };
 // 3D form guide: three.js and the viewer load only when it is first opened. The EMOM timer is independent of it.
@@ -805,6 +857,7 @@ async function openForm(moveId, level, opener) {
   formMod.openForm({ moveId, level, opener });
 }
 const changes = {
+  recapMonth: (el) => { recapYm = el.value; render(); },
   stepSet: (el) => {
     const s = sess; if (!s) return;
     const n = Math.max(0, Math.floor(Number(String(el.value).replace(/\D/g, ''))) || 0), w = el.dataset.w;

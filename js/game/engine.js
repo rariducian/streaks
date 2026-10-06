@@ -1,5 +1,5 @@
 // Tower engine: pure logic, no DOM. Mutates the game object it is given (state.game). Spec: docs/TOWER.md
-import { computeStreak, trainingDates, restFn, restBetween } from '../logic.js';
+import { computeStreak, trainingDates, restFn, restBetween, monthOf } from '../logic.js';
 import { traitsOf, isElite } from './scene.js';
 
 export const CONFIG = {
@@ -71,7 +71,9 @@ export function ensureGame(state) {
   const obj = (k, d) => { if (!g[k] || typeof g[k] !== 'object' || Array.isArray(g[k])) g[k] = d; };
   num('soulsSpent', 0); num('seq', 0); num('keyFor', 0);
   num('keys', had ? CONFIG.migrateKeys : 0); g.keys = Math.max(0, Math.min(CONFIG.keyCap, Math.floor(g.keys))); g.waiting = !!g.waiting; g.kw = !!g.kw;   // old saves start with a key. kw: the welcome grant has been paid
-  obj('stats', {}); obj('focusUp', {}); obj('gear', {}); obj('paid', {}); obj('talents', {});
+  obj('stats', {}); obj('focusUp', {}); obj('gear', {}); obj('paid', {}); obj('talents', {}); obj('floorLog', {}); obj('setLog', {});
+  for (const k of Object.keys(g.floorLog)) if (!/^\d{4}-\d{2}$/.test(k) || !Number.isFinite(g.floorLog[k])) delete g.floorLog[k];
+  const ym = monthOf(); if (g.floorLog[ym] === undefined) g.floorLog[ym] = g.floor;   // the floor a month started on (when it first saw the game). The monthly recap reads it
   for (const k of ['atk', 'hp', 'spd']) num2(g.stats, k);
   for (const k of Object.keys(CONFIG.focusUp)) { num2(g.focusUp, k); g.focusUp[k] = Math.min(g.focusUp[k], CONFIG.focusUp[k].max); }
   for (const k of TALENTS) { num2(g.talents, k); g.talents[k] = Math.min(Math.floor(g.talents[k]), CONFIG.talents[k].max); }
@@ -264,7 +266,7 @@ export function giveDrop(g, item) {
   const better = !cur || (!cur.lock && power(it) > power(cur));
   let scrap = 0;
   if (better) { g.gear[it.slot] = it; if (cur) scrap = stow(g, cur); } else scrap = stow(g, it);
-  const rec = { ...own(it), equipped: better, scrap }; delete rec.id;
+  const rec = { ...own(it), equipped: better, scrap, at: Date.now() }; delete rec.id;   // at: when it dropped, for the monthly recap
   g.drops.push(rec); if (g.drops.length > CONFIG.dropLog) g.drops.splice(0, g.drops.length - CONFIG.dropLog);
   return { ...rec, id: it.id };   // the log keeps no id, the caller gets it (the loot card equips by it)
 }
@@ -277,7 +279,9 @@ export function giveSetPiece(g, id, rng = Math.random) {
   const have = setPieces(g, id), missing = SLOTS.filter((s) => !have.some((it) => it.slot === s));
   if (missing.length) {
     const it = rollDrop(g, g.floor, rng, { slot: missing[Math.min(missing.length - 1, Math.floor(rng() * missing.length))], min: 'rare' }); it.set = id;
-    return { kind: 'piece', ...giveDrop(g, it) };
+    const out = { kind: 'piece', ...giveDrop(g, it) };
+    if (missing.length === 1) { const ym = monthOf(); g.setLog = g.setLog || {}; (g.setLog[ym] = g.setLog[ym] || []).push(id); }   // the third piece completes the set
+    return out;
   }
   const it = have.slice().sort((a, b) => a.tier - b.tier || (a.lvl || 0) - (b.lvl || 0) || a.id - b.id)[0], t = tierNow(g), grow = (n) => 1 + CONFIG.tierGrow * (n - 1);
   if (it.tier < t) { for (const a of it.aff) a.v = Math.round(a.v * grow(t) / grow(it.tier) * 1000) / 1000; it.tier = t; } else it.lvl = (it.lvl || 0) + 1;
