@@ -94,6 +94,19 @@ const MOVE_LIST = [
   },
 ];
 
+// Realistic seconds per rep at the prescribed tempo (rep-based moves only), one per level in ladder order. rangeOf uses it to cap the range to the work window.
+// Slow reps add up: "3s down, 1s pause" is about 3 + 1 + 1 to reset = 5. Core is timed, so it has none.
+const SEC = {
+  hpush: [2, 2.5, 2.5, 2.5, 3.5, 3, 4],
+  vpush: [2.5, 5, 2.5, 3, 7],
+  squat: [2.5, 5, 3, 3.5, 4, 5],
+  hinge: [2.5, 3.5, 4, 5],
+  hamcurl: [2.5, 4.5, 3.5, 6, 7],
+  calf: [3.5, 3, 6, 3],
+  row: [2.5, 2.5, 3, 4, 3, 7, 3.5, 3.5],
+};
+for (const m of MOVE_LIST) if (SEC[m.id]) m.levels.forEach((l, i) => { l.sec = SEC[m.id][i]; });
+
 // MOVES is an object keyed by move id (use MOVE_LIST for an ordered array).
 export const MOVES = Object.fromEntries(MOVE_LIST.map((m) => [m.id, m]));
 export { MOVE_LIST };

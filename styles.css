@@ -179,6 +179,12 @@ h2.title .chev{color:var(--muted);font-weight:400;font-size:1.294rem;line-height
 .ladder span{flex:1;border-radius:99px;background:var(--track);overflow:hidden}
 .ladder i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#FF9A3C,#EF4036)}
 .mastered{display:inline-block;font-size:0.647rem;font-weight:700;padding:1px 7px;border-radius:99px;background:var(--pill-g);color:var(--green-text);margin-right:4px}
+.tcard.tappable{cursor:pointer}.tcard.tappable:active{opacity:.7}
+.fit{font-size:0.706rem;color:var(--muted);margin:-4px 0 8px}
+.ln .fit{margin:0}
+.tchart svg{display:block;width:100%;height:auto}.tchart .legend{flex-wrap:wrap;gap:4px 12px}
+.legend .lg{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}.legend .lg.ln{width:12px;height:2px;border-radius:1px;vertical-align:middle}.legend .lg.dash{width:12px;height:0;border-radius:0;border-top:2px dashed var(--green);background:none;vertical-align:middle}
+.tmsg{margin:14px 0 0;font-size:0.941rem}.tsub{margin:2px 0 0;font-size:0.765rem;color:var(--muted)}
 .trends{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .tcard{background:var(--card);border-radius:18px;padding:12px}
 .tcard .nm{font-weight:650;font-size:0.882rem}

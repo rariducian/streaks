@@ -32,17 +32,23 @@ const usableLevelIdx = (moveId, bar) =>
 const nextUsable = (moveId, level, bar) => usableLevelIdx(moveId, bar).find((i) => i > level);
 const prevUsable = (moveId, level, bar) => usableLevelIdx(moveId, bar).filter((i) => i < level).pop();
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-// Range [min,max] for a level: the level's own range, else the move's. For sec moves the max is capped at the work time.
-// Pass workSec to apply the cap; without it the plain range is returned.
+// Setup time at the start of each work window, before the first rep.
+export const SETUP_SEC = 3;
+// Range [min,max] for a level: the level's own range, else the move's. With workSec the range is fitted to the work window.
+// Sec moves: max capped at the work time. Rep moves: max capped at floor((workSec - setup) / sec per rep), min pulled down to stay within 2 of it.
+// Without workSec the plain range is returned.
 export function rangeOf(moveId, level, workSec = null) {
   const m = MOVES[moveId];
   const lv = m.levels[level];
   let [lo, hi] = (lv && lv.range) || m.range;
-  if (m.unit === 'sec' && workSec) { hi = Math.min(hi, workSec); lo = Math.min(lo, hi); }
+  if (workSec && m.unit === 'sec') { hi = Math.min(hi, workSec); lo = Math.min(lo, hi); }
+  else if (workSec && lv && lv.sec) { hi = Math.min(hi, Math.max(1, Math.floor((workSec - SETUP_SEC) / lv.sec))); lo = Math.min(lo, Math.max(1, hi - 2)); }
   return [lo, hi];
 }
-const workOf = (state) => state.settings.workSec || DEFAULT_WORK_SEC;
-const defaultMove = (id) => ({ level: 0, target: rangeOf(id, 0)[0], calibrated: false, missStreak: 0 });
+// True when the work window cut this level's max (so the UI can say so).
+export const isCapped = (moveId, level, workSec) => !!workSec && rangeOf(moveId, level, workSec)[1] <= rangeOf(moveId, level)[1] - 2;   // a cut of 2+ reps is worth a note; 1 rep is noise
+const workOf = (state) => (state.settings && state.settings.workSec) || DEFAULT_WORK_SEC;
+const defaultMove = (id) => ({ level: 0, target: rangeOf(id, 0, DEFAULT_WORK_SEC)[0], calibrated: false, missStreak: 0 });
 const makeId = (now = new Date()) => now.getTime().toString(36) + Math.random().toString(36).slice(2, 6);
 
 // ---------- state ----------
@@ -445,10 +451,57 @@ export function moveProgress(state) {
     for (const se of state.sessions) for (const x of se.sets) if (x.moveId === m.id && x.level === level) best = Math.max(best, x.reps);
     return {
       moveId: m.id, name: m.name, unit: m.unit, level, levelName: m.levels[level].name, idx, frac,
-      levelsTotal: usable.length, target: clamp(ms.target, range[0], range[1]), range,
+      levelsTotal: usable.length, target: clamp(ms.target, range[0], range[1]), range, capped: isCapped(m.id, level, workOf(state)),
       pct: Math.round(clamp(((idx + frac) / usable.length) * 100, 0, 100)), best,
     };
   });
+}
+
+// ---------- per-move trend ----------
+export const TREND_MIN = 4;        // sessions at the current level before a trend is shown
+export const TREND_CAP = 20;       // "20+ sessions" is the furthest we look ahead
+// Least-squares line through [{x, y}]. Returns { slope, intercept } or null with fewer than 2 points or all the same x.
+export function leastSquares(pts) {
+  const n = pts.length;
+  if (n < 2) return null;
+  const mx = pts.reduce((a, p) => a + p.x, 0) / n, my = pts.reduce((a, p) => a + p.y, 0) / n;
+  let sxx = 0, sxy = 0;
+  for (const p of pts) { sxx += (p.x - mx) ** 2; sxy += (p.x - mx) * (p.y - my); }
+  if (!sxx) return null;
+  const slope = sxy / sxx;
+  return { slope, intercept: my - slope * mx };
+}
+// Sessions until the lowest set reaches the max at the given gain per session. null when there is no gain to work with.
+// Rounded up (never promise early), at least 1, and capped: { sessions, over } where over means "more than the cap".
+export function sessionsToLevelUp(lowest, max, slope) {
+  if (!(slope >= 0.05)) return null;
+  const n = Math.max(1, Math.ceil((max - lowest) / slope - 1e-9));
+  return { sessions: Math.min(n, TREND_CAP), over: n > TREND_CAP };
+}
+// Everything the detail sheet needs for one move. Minimum days are left out, like in progression.
+// points: every session with sets for this move, oldest first, { date, level, mean, lowest }. cur: the ones at the current level.
+// fit: trend line values for cur (index based, so "per session"). markers: indexes into points where the level went up.
+export function moveSeries(state, moveId) {
+  const m = MOVES[moveId], level = effectiveLevel(state, moveId), work = workOf(state);
+  const sess = state.sessions.filter((se) => !se.minimum && se.sets && se.sets.some((x) => x.moveId === moveId && x.level != null)).sort((a, b) => (a.startedAt || a.date) < (b.startedAt || b.date) ? -1 : 1);
+  const points = [];
+  for (const se of sess) {
+    const byLv = new Map();
+    for (const x of se.sets) if (x.moveId === moveId && x.level != null) byLv.set(x.level, [...(byLv.get(x.level) || []), setReps(x)]);
+    for (const [lv, r] of [...byLv].sort((a, b) => a[0] - b[0])) points.push({ date: se.date, level: lv, mean: r.reduce((a, b) => a + b, 0) / r.length, lowest: Math.min(...r) });
+  }
+  const markers = [];
+  points.forEach((p, i) => { if (i && p.level > points[i - 1].level) markers.push(i); });
+  const cur = points.filter((p) => p.level === level);
+  const max = rangeOf(moveId, level, work)[1];
+  const ls = cur.length >= TREND_MIN ? leastSquares(cur.map((p, i) => ({ x: i, y: p.mean }))) : null;
+  const slope = ls ? ls.slope : null;
+  const flat = !!ls && !(slope >= 0.05);
+  const est = ls && !flat ? sessionsToLevelUp(cur[cur.length - 1].lowest, max, slope) : null;
+  return {
+    moveId, unit: m.unit, level, levelName: m.levels[level].name, max, capped: isCapped(moveId, level, work), top: nextUsable(moveId, level, state.settings.pullupBar) === undefined, points, markers, cur, need: TREND_MIN,
+    enough: cur.length >= TREND_MIN, slope, flat, est, fit: ls ? cur.map((p, i) => ls.intercept + ls.slope * i) : null,
+  };
 }
 
 // ---------- rep totals ----------
@@ -533,7 +586,7 @@ export function barUnlockDue(state) {
   if (state.settings.pullupBar) return false;
   const ms = state.moves.row || defaultMove('row');
   const usable = usableLevelIdx('row', false);
-  return ms.level === usable[usable.length - 1] && ms.target >= rangeOf('row', ms.level)[1];
+  return ms.level === usable[usable.length - 1] && ms.target >= rangeOf('row', ms.level, workOf(state))[1];
 }
 
 export function setPullupBar(state, on) {
@@ -545,10 +598,10 @@ export function setPullupBar(state, on) {
     const ms = s.moves[m.id];
     if (on && due && m.id === 'row') {
       ms.level = nextUsable('row', ms.level, true);
-      ms.target = rangeOf('row', ms.level)[0]; ms.missStreak = 0;
+      ms.target = rangeOf('row', ms.level, workOf(s))[0]; ms.missStreak = 0;
     } else if (!on && m.levels[ms.level].requiresBar) {
       ms.level = prevUsable(m.id, ms.level, false) ?? 0;
-      ms.target = rangeOf(m.id, ms.level)[1]; ms.missStreak = 0;
+      ms.target = rangeOf(m.id, ms.level, workOf(s))[1]; ms.missStreak = 0;
     }
   }
   return s;
@@ -565,6 +618,19 @@ export function backupDue(state, now) {
 export function markBackedUp(state, now) {
   const s = clone(state);
   s.settings.lastBackupAt = toDate(now).toISOString();
+  return s;
+}
+
+// Pull stored targets above the fitted max (for the current work time) down to it. Levels are never touched. Pure; works on any saved shape.
+export function clampTargets(state) {
+  const s = clone(state), work = workOf(s);
+  for (const id of Object.keys(MOVES)) {
+    const mv = s.moves && s.moves[id];
+    if (!isObj(mv) || !Number.isFinite(mv.target)) continue;
+    const lv = clamp(Number.isInteger(mv.level) ? mv.level : 0, 0, MOVES[id].levels.length - 1);
+    const hi = rangeOf(id, lv, work)[1];
+    if (mv.target > hi) mv.target = hi;
+  }
   return s;
 }
 

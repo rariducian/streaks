@@ -4,7 +4,7 @@ import {
   todayStr, addDays, defaultState, sessionPlan, placeFromCalibration, applyCalibration, finishSession,
   trainingDates, fastingDates, computeStreak, heatmap, runningFast, startFast, endFast, editFast,
   deleteFast, fastStage, fastStats, moveTrend, moveProgress, recentEvents, growthOffer,
-  acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals, restFn, setRestDays, MAX_REST_DAYS, monthOf
+  acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, moveSeries, repTotals, sessionTotals, restFn, setRestDays, MAX_REST_DAYS, monthOf
 } from './logic.js';
 import { load, save, exportJSON, importJSON, normalise, STORAGE_KEY } from './store.js';
 import { migrate } from './logic.js';
@@ -328,7 +328,37 @@ function trendCard(t) {
     dots += `<circle cx="${x(i).toFixed(1)}" cy="${y(p.score).toFixed(1)}" r="${p === last ? 4 : 2}" fill="var(--orange)"/>`;
   });
   const svg = last ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(lab)}"><path d="${d}" fill="none" stroke="var(--orange)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>${dots}</svg>` : '<div class="muted">No sets in 8 weeks</div>';
-  return `<div class="tcard"><div class="nm">${esc(t.name)}</div><div class="tv tnum">${last ? head : '&nbsp;'}</div>${svg}</div>`;
+  return `<div class="tcard tappable" role="button" tabindex="0" data-act="trend" data-move="${esc(t.moveId)}" aria-label="${esc(`${t.name} trend: ${last ? head.replace(/&middot;/g, ',') : 'no sets in 8 weeks'}. Opens the detail chart`)}"><div class="nm">${esc(t.name)}</div><div class="tv tnum">${last ? head : '&nbsp;'}</div>${svg}</div>`;
+}
+// Detail chart for one move: mean per session at the current level (dots), least-squares trend, dashed level-up mark. Earlier levels are faded, with a marker at each level-up.
+const dayMs = (d) => parseDate(d).getTime();
+function trendChart(t, name) {
+  const pts = t.points; if (!pts.length) return '';
+  const W = 340, H = 190, l = 30, r = 12, tp = 14, b = 28, u = t.unit === 'sec' ? 's' : '';
+  const vals = [...pts.map((p) => p.mean), ...(t.fit || []), t.max];
+  const lo = Math.max(0, Math.floor(Math.min(...vals) - 1)), hi = Math.ceil(Math.max(...vals) + 1);
+  const t0 = dayMs(pts[0].date), t1 = dayMs(pts[pts.length - 1].date);
+  const x = (d) => l + (t1 > t0 ? (dayMs(d) - t0) / (t1 - t0) : 0.5) * (W - l - r), y = (v) => H - b - (H - b - tp) * (v - lo) / (hi - lo);
+  const ticks = [lo, Math.round((lo + hi) / 2), hi].filter((v, i, a) => a.indexOf(v) === i);
+  let o = ticks.map((v) => `<line x1="${l}" x2="${W - r}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="var(--line)"/><text x="${l - 5}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`).join('');
+  o += t.markers.map((i) => `<line x1="${(x(pts[i].date) - 0.5).toFixed(1)}" x2="${(x(pts[i].date) - 0.5).toFixed(1)}" y1="${tp}" y2="${H - b}" stroke="var(--muted)" stroke-width="1" opacity=".6"/><text x="${(x(pts[i].date) + 3).toFixed(1)}" y="${tp + 8}">Level ${pts[i].level + 1}</text>`).join('');
+  o += `<line x1="${l}" x2="${W - r}" y1="${y(t.max).toFixed(1)}" y2="${y(t.max).toFixed(1)}" stroke="var(--green)" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${W - r}" y="${(y(t.max) - 4).toFixed(1)}" text-anchor="end" style="fill:var(--green-text)">Level up at ${t.max}${u}</text>`;
+  if (t.fit) o += `<path d="${t.cur.map((p, i) => `${i ? 'L' : 'M'}${x(p.date).toFixed(1)} ${y(t.fit[i]).toFixed(1)}`).join('')}" fill="none" stroke="var(--orange)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+  o += pts.map((p, i) => `<circle cx="${x(p.date).toFixed(1)}" cy="${y(p.mean).toFixed(1)}" r="${i === pts.length - 1 ? 4 : 3}" fill="var(--orange)"${p.level === t.level ? '' : ' opacity=".3"'}/>`).join('');
+  const dl = (d) => dmy(parseDate(d));
+  o += `<text x="${l}" y="${H - 8}">${dl(pts[0].date)}</text>${t1 > t0 ? `<text x="${W - r}" y="${H - 8}" text-anchor="end">${dl(pts[pts.length - 1].date)}</text>` : ''}`;
+  const cur = t.cur.map((p) => `${+p.mean.toFixed(1)}`).join(', ');
+  const lab = `${name} average ${t.unit === 'sec' ? 'seconds' : 'reps'} per session at this level, oldest first: ${cur || 'none yet'}. Level-up mark ${t.max}.${t.fit ? ` Trend ${t.slope >= 0.05 ? 'up' : 'flat'}.` : ''}${t.markers.length ? ` Earlier levels are shown faded, with ${t.markers.length} level-up${t.markers.length > 1 ? 's' : ''}.` : ''}`;
+  return `<div class="chart tchart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(lab)}">${o}</svg>
+    <div class="legend"><span><i class="lg" style="background:var(--orange)"></i>Session average</span><span><i class="lg ln" style="background:var(--orange)"></i>Trend</span><span><i class="lg dash"></i>Level-up mark</span></div></div>`;
+}
+function trendSheet(id) {
+  const t = moveSeries(state, id), name = moveName(id), word = t.unit === 'sec' ? 'sec' : 'reps';
+  let msg;
+  if (!t.enough) msg = `<p class="tmsg">Not enough data yet: ${t.cur.length} of ${t.need} sessions.</p>`;
+  else if (t.flat) msg = `<p class="tmsg">Flat lately. Rest, sleep and full sessions help.</p>`;
+  else msg = `<p class="tmsg"><b class="tnum">+${t.slope.toFixed(1)} ${word} a session</b></p>${t.top ? '<p class="tsub">You are on the top level. Aim for the max.</p>' : `<p class="tmsg">${t.est.over ? `${t.est.sessions}+ sessions to level up` : `About ${t.est.sessions} session${t.est.sessions === 1 ? '' : 's'} to level up`}</p><p class="tsub">A rough guide from your recent sessions, not a promise.</p>`}`;
+  return { title: esc(name), body: `<div class="ln muted" style="margin-bottom:10px">${esc(t.levelName)}${t.capped ? ` &middot; <span class="fit">Max ${t.max} (fits ${workSecOf()} s work)</span>` : ''}</div>${trendChart(t, name) || '<p class="muted">No sessions logged for this move yet.</p>'}${msg}` };
 }
 function evLabel(e) {
   const n = moveName(e.moveId), lv = levelName(e);
@@ -372,7 +402,7 @@ function viewFitness() {
   const done = computeStreak(trainingDates(state), today).doneToday;
   return `${sessionHero(done)}<div class="section"><h2 class="title">Levels</h2>
     ${mp.map((m) => `<div class="lvl${lvlAttrs(m)}><div class="top"><span class="nm">${esc(m.name)}</span><span class="tg">${m.idx === m.levelsTotal - 1 && m.frac === 1 ? '<span class="mastered">Mastered</span> ' : ''}Target ${m.target}/${m.range[1]}${m.unit === 'sec' ? 's' : ''}</span></div>
-    <div class="ln">Level ${m.level + 1} of ${m.levelsTotal} &middot; ${esc(m.levelName)}${m.best ? ` &middot; best ${m.best}` : ''}</div><div class="ladder" aria-hidden="true">${ladder(m)}</div></div>`).join('')}</div>
+    <div class="ln">Level ${m.level + 1} of ${m.levelsTotal} &middot; ${esc(m.levelName)}${m.best ? ` &middot; best ${m.best}` : ''}</div>${m.capped ? `<div class="fit">Max ${m.range[1]} (fits ${workSecOf()} s work)</div>` : ''}<div class="ladder" aria-hidden="true">${ladder(m)}</div></div>`).join('')}</div>
   ${repCard(today)}
   <div class="section"><h2 class="title">Progress by move</h2><p class="chartsum">Your place on each ladder. Steps up are level-ups.</p><div class="trends">${moveTrend(state, today, 8).map(trendCard).join('')}</div></div>`;
 }
@@ -460,6 +490,8 @@ function sheetHtml() {
     const r = gearSheet(ensureGame(state), sheet.slot, sheet.msg, sheet.id ?? null); title = r.title; body = r.body;
   } else if (sheet.type === 'inv') {
     const r = invSheet(ensureGame(state), sheet); title = r.title; body = r.body;
+  } else if (sheet.type === 'trend') {
+    const r = trendSheet(sheet.id); title = r.title; body = r.body;
   } else if (sheet.type === 'quick') {
     title = 'Quick log';
     const run = runningFast(state);
@@ -740,6 +772,7 @@ const act = {
     if (!(await ask(restoreConfirm(x)))) return;
     await snapshot(bak, state, new Date(), { label: 'before restore', force: true });
     sheet = null; commit(normalise(migrate(structuredClone(x.state)))); toast('Restored.'); },
+  trend: (el) => { sheet = { type: 'trend', id: el.dataset.move }; renderSheet(); },
   quick: () => { unmountTower(); sheet = { type: 'quick' }; renderSheet(); },
   closeSheet: () => {
     if (sheet && sheet.back) { sheet = sheet.back; renderSheet(); return; }   // the forge opened from the inventory goes back to it

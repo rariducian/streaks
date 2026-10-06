@@ -1,6 +1,6 @@
 // localStorage persistence. Every access is wrapped in try/catch.
 import { MOVES } from './data.js';
-import { defaultState, migrate } from './logic.js';
+import { defaultState, migrate, clampTargets } from './logic.js';
 
 export const STORAGE_KEY = 'streaks.v1';
 
@@ -25,7 +25,7 @@ export function normalise(raw) {
     m.level = Math.min(MOVES[id].levels.length - 1, Math.max(0, Number.isInteger(m.level) ? m.level : 0));
     s.moves[id] = m;
   }
-  return s;
+  return clampTargets(s);   // targets above the fitted max for the work time come down to it
 }
 
 export function load() {

@@ -1,4 +1,4 @@
-const CACHE = 'streaks-v28';
+const CACHE = 'streaks-v29';
 const THREE_CACHE = 'streaks-three-0.170.0';           // pinned version, so cache-first is safe
 const THREE_PREFIX = 'https://cdn.jsdelivr.net/npm/three@0.170.0/';
 const MOVES = ['hpush', 'vpush', 'squat', 'hinge', 'row', 'core'];   // moves that have pose files (hamcurl and calf have none yet)
