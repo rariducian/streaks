@@ -1,5 +1,5 @@
 // Tower tab: HTML view plus the battle canvas. Isometric stone floor, chibi units, drawn at art resolution then scaled up crisp.
-import { CONFIG, SLOTS, SLOT_STAT, TALENTS, SET_IDS, ensureGame, heroStats, fight, advance, offlineCatchUp, statCost, focusCost, focusMax, focusOpen, keyCap, bossTimer, canAscend, soulsFor, isBoss, atDoor, power, forgeCost, forgeBlock, stashMax, soulsLeft, talentCost, canRespec, lookOf, inventory, compareItem, findItem, setCounts, activeSets, tierNow } from './engine.js';
+import { CONFIG, SLOTS, SLOT_STAT, TALENTS, SET_IDS, ensureGame, heroStats, fight, advance, offlineCatchUp, statCost, focusCost, focusMax, focusNextCap, nextCapFloor, capLevel, focusOpen, keyCap, bossTimer, canAscend, soulsFor, isBoss, atDoor, power, forgeCost, forgeBlock, stashMax, soulsLeft, talentCost, canRespec, lookOf, inventory, compareItem, findItem, setCounts, activeSets, tierNow } from './engine.js';
 import { getSprite, getHero, iconInfo, PAL, hexA, SET_COLOR } from './sprites.js';
 import { ensureBounty, bountyStatus, bountyText } from './bounty.js';
 import { todayStr, restedPending } from '../logic.js';
@@ -181,18 +181,23 @@ FOCUS_ROWS.push(
   ['thorn', 'Thornmail', (g) => `+${pp('thorn')}% thorns (now +${Math.round(fx(g, 'thorn') * 100)}%)`], ['mastery', 'Forge Mastery', (g) => `-${pp('mastery')}% forge cost (now -${Math.round(fx(g, 'mastery') * 100)}%)`],
   ['sense', 'Treasure Sense', (g) => `+${pp('sense')}% chance a boss drop is one tier higher (now ${Math.round(fx(g, 'sense') * 100)}%)`], ['ring', 'Key Ring', (g) => `+${FU.ring.per} key cap (now ${keyCap(g)})`],
   ['overkill', 'Overkill', (g) => `+${pp('overkill')}% crit damage (now x${Math.round(heroStats(g).critMult * 100) / 100})${heroStats(g).crit > 0 ? '' : '. No effect until you have crit chance: buy Precision first'}`], ['dilation', 'Time Dilation', (g) => `+${FU.dilation.per} s boss timer (now ${Math.round(bossTimer(g))} s)`],
-  ['ascendant', 'Ascendant', (g) => `+${FU.ascendant.per} soul per ascension (now +${fx(g, 'ascendant')})`]
+  ['ascendant', 'Ascendant', (g) => `+${FU.ascendant.per} soul per ascension (now +${fx(g, 'ascendant')})`],
+  ['fortify', 'Fortify', (g) => `+${pp('fortify')}% Health (now +${Math.round(fx(g, 'fortify') * 100)}%)`], ['keen', 'Keen Edge', (g) => `+${pp('keen')}% Attack (now +${Math.round(fx(g, 'keen') * 100)}%)`],
+  ['gilded', 'Gilded Keys', (g) => `+${pp('gilded')}% chance a paid session gives 1 extra key (now ${Math.round(Math.min(FU.gilded.cap, fx(g, 'gilded')) * 100)}%)`], ['echo', 'Echo', (g) => `+${pp('echo')}% chance a boss drops a second item (now ${Math.round(Math.min(FU.echo.cap, fx(g, 'echo')) * 100)}%, at most ${Math.round(FU.echo.cap * 100)}%)`]
 );
 const FOCUS_NAME = Object.fromEntries(FOCUS_ROWS.map((r) => [r[0], r[1]]));
 export const focusUnlockTxt = (id) => `Beat the floor ${FU[id].need} boss to unlock`;
 // What the section shows: every open upgrade, then the next 2 locked ones (in unlock order). The rest stay hidden.
 const FOCUS_LOCKS = 2;
 function focusShown(g) { const open = FOCUS_ROWS.filter((r) => focusOpen(g, r[0])), locked = FOCUS_ROWS.filter((r) => !focusOpen(g, r[0])).slice(0, FOCUS_LOCKS); return { open, locked, sig: open.map((r) => r[0]).join() + '|' + locked.map((r) => r[0]).join() }; }
+// At the current max with a higher cap coming: say when. At the final max: just Max.
+export const capNote = (g, id) => { const n = focusNextCap(g, id); return n ? `Max for now. Rises to ${n.max} at the floor ${n.floor} boss` : ''; };
+export const capLine = (g) => { const f = nextCapFloor(g); return f ? `Next cap raise: floor ${f} boss (+${Math.round(CONFIG.capPct * 100)}% max levels)` : 'All level caps raised'; };
 function focusParts(g, [id, nm, desc]) {
-  const lv = g.focusUp[id], max = lv >= focusMax(id), cost = max ? 0 : focusCost(id, lv);
-  return { cost, off: max || g.focus < cost, main: `<div class="tw-nm">${nm} <span class="tw-lv">Lv ${lv}/${focusMax(id)}</span></div><div class="tw-sub">${desc(g)}</div>`,
-    label: max ? `${nm} is at max level` : `Upgrade ${nm} to level ${lv + 1} for ${cost} Focus`, txt: btnTxt(max, 'focus', cost),
-    row: `${nm}, level ${lv} of ${focusMax(id)}. ${desc(g)}` };
+  const lv = g.focusUp[id], mx = focusMax(g, id), max = lv >= mx, cost = max ? 0 : focusCost(id, lv), note = max ? capNote(g, id) : '';
+  return { cost, off: max || g.focus < cost, main: `<div class="tw-nm">${nm} <span class="tw-lv">Lv ${lv}/${mx}</span></div><div class="tw-sub">${desc(g)}</div>${note ? `<div class="tw-sub tw-capnote">${esc(note)}</div>` : ''}`,
+    label: max ? `${nm} is at max level${note ? `. ${note}` : ''}` : `Upgrade ${nm} to level ${lv + 1} for ${cost} Focus`, txt: btnTxt(max, 'focus', cost),
+    row: `${nm}, level ${lv} of ${mx}. ${desc(g)}${note ? `. ${note}` : ''}` };
 }
 function focusRow(g, row) {
   const id = row[0], p = focusParts(g, row);
@@ -200,6 +205,7 @@ function focusRow(g, row) {
     <button class="btn sm tw-buy tnum" data-act="buyFocus" data-up="${id}" data-fcost="${p.cost}" aria-label="${esc(p.label)}" ${p.off ? 'disabled' : ''}>${p.txt}</button></div>`;
 }
 const lockedRow = ([id, nm]) => `<div class="tw-row tw-lock" data-row="lock:${id}" role="group" aria-label="${esc(`Locked. ${focusUnlockTxt(id)} ${nm}`)}"><div class="tw-main" aria-hidden="true"><div class="tw-nm"><span class="tw-pad">&#128274;</span> ${focusUnlockTxt(id)}: ${esc(nm)}</div></div></div>`;
+const capLineHtml = (g) => `<p class="small muted tw-capline" id="tw-capline" role="note" aria-label="${esc(capLine(g))}">${esc(capLine(g))}</p>`;
 const focusHtml = (g) => { const f = focusShown(g); return f.open.map((r) => focusRow(g, r)).join('') + f.locked.map(lockedRow).join(''); };
 // Soul tree: each row shows the effect now and next, like the stat rows.
 const TAL = {
@@ -238,7 +244,7 @@ export function awayHtml(a) {
   if (!a) return '';
   const hrs = a.seconds >= 3600 ? `${Math.round(a.seconds / 360) / 10} h` : `${Math.round(a.seconds / 60)} min`;
   const best = a.best ? ` Best drop: ${esc(a.best.rarity)} ${esc(SLOT_NAME[a.best.slot].toLowerCase())}, +${pct(a.best.bonus)}${a.best.power ? `, power ${Math.round(a.best.power * 10) / 10}` : ''}${a.best.equipped ? ' (equipped)' : ' (in the stash)'}.` : '';
-  return `<div class="note tw-away"><h3>While you were away</h3><p>${hrs}${a.capped ? ' (the most it can count)' : ''}: your hero climbed ${a.floors} floor${a.floors === 1 ? '' : 's'} to floor ${a.to} and beat ${a.bosses} boss${a.bosses === 1 ? '' : 'es'}.${best}${unlockNames(a.unlocked).length ? ` New Focus upgrade${a.unlocked.length > 1 ? 's' : ''}: ${esc(unlockNames(a.unlocked).join(', '))}.` : ''}${a.waiting ? ` ${WAIT_TXT}` : ''}</p></div>`;
+  return `<div class="note tw-away"><h3>While you were away</h3><p>${hrs}${a.capped ? ' (the most it can count)' : ''}: your hero climbed ${a.floors} floor${a.floors === 1 ? '' : 's'} to floor ${a.to} and beat ${a.bosses} boss${a.bosses === 1 ? '' : 'es'}.${best}${a.capsUp ? ` ${CAPS_TXT}.` : ''}${unlockNames(a.unlocked).length ? ` New Focus upgrade${a.unlocked.length > 1 ? 's' : ''}: ${esc(unlockNames(a.unlocked).join(', '))}.` : ''}${a.waiting ? ` ${WAIT_TXT}` : ''}</p></div>`;
 }
 export const keysLabel = (n) => `${n} boss key${n === 1 ? '' : 's'}`;
 const badgeText = (g) => {
@@ -270,7 +276,7 @@ export function viewTower(state) {
   <div class="section"><h2 class="title">Weekly bounty</h2><div class="tw-card" id="tw-bounty">${bountyHtml(state)}</div></div>
   <div class="section"><h2 class="title">Hero</h2><div class="tw-card">${['atk', 'hp', 'spd'].map((s) => statRow(g, s)).join('')}</div></div>
   <div class="section"><h2 class="title">Gear</h2><div class="tw-card" id="tw-gear">${gearHtml(g)}</div></div>
-  <div class="section"><h2 class="title">Focus upgrades</h2><div class="tw-card" id="tw-focus" data-sig="${focusShown(g).sig}">${focusHtml(g)}</div><p class="small muted tw-note">Spend Focus on the Forge too: tap a gear slot above. Beating a boss for the first time can unlock more upgrades.</p></div>
+  <div class="section"><h2 class="title">Focus upgrades</h2>${capLineHtml(g)}<div class="tw-card" id="tw-focus" data-sig="${focusShown(g).sig}">${focusHtml(g)}</div><p class="small muted tw-note">Spend Focus on the Forge too: tap a gear slot above. Beating a boss for the first time can unlock more upgrades.</p></div>
   <div class="section"><h2 class="title">Soul tree</h2><div class="tw-card" id="tw-souls">${TALENTS.map((k) => talentRow(g, k)).join('')}${respecRow(g)}</div></div>
   ${asc}
   <div class="section"><h2 class="title">How you earn</h2><div class="tw-card tw-how"><p><b><span aria-hidden="true">&#9889;</span> Sweat</b> from training. Full session 100, minimum day 40, times your streak bonus (up to &times;1.5). Only 2 sessions a day pay, the 2nd half.</p><p><b>&#9889; Bonus</b> level-up +300 and an Ascend token, new best +100.</p><p><b>&#9670; Focus</b> from fasts that reach your &ldquo;counts after&rdquo; hours: 30, plus 5 for each extra hour, up to 80.</p><p><b>Weekly bounty</b> a goal for the week from your real training. Claim it for a chest with a rare or better item and a boss key, until the Monday after it ends.</p><p><b>Gear sets</b> each move has a 3 piece set. Level up that move in real life to get a piece. Wear 2 or 3 pieces for bonuses. <b>Rest days</b> you plan in Settings keep your streak, and the next session after one earns Rested (+10% Sweat).</p><p><b><span aria-hidden="true">&#128273;</span> Boss keys</b> from training: 1 for each session (the first 2 a day, minimum days count) and 1 more for a level-up. A boss needs a key. You hold up to ${CONFIG.keyCap}, and a lost boss fight keeps its key.</p><p><b>&#10022; Souls</b> from ascending, spent on talents. Missed days cost nothing. The hero keeps climbing.</p></div></div>`;
@@ -351,7 +357,7 @@ function tick(m) {
     m.key = ''; updateUi(m, now);
   } else if (dt > 0) {
     const s = advance(g, dt); g.lastTick = now;
-    if (s.drops.length) { m.lastUi = 0; if (m.live && !m.live.done && s.bosses) { m.live.done = true; showLoot(m, s.drops[s.drops.length - 1], s.unlocked); } }
+    if (s.drops.length) { m.lastUi = 0; if (m.live && !m.live.done && s.bosses) { m.live.done = true; showLoot(m, s.drops[s.drops.length - 1], s.unlocked, s.capsUp); } }
   }
   if (now - m.lastSave > 5000) { try { m.save(m.state); } catch (e) { /* ignore */ } m.lastSave = now; }
   if (now - m.lastUi > 1000) updateUi(m, now);
@@ -377,6 +383,7 @@ export function refreshTowerUi(state) {
   for (const st of ['atk', 'hp', 'spd']) patch('stat:' + st, statParts(g, st));
   const fe = document.getElementById('tw-focus'), fs = focusShown(g).sig;
   if (fe && fe.dataset.sig !== fs) { const had = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.up; fe.dataset.sig = fs; fe.innerHTML = focusHtml(g); if (had) { const b = fe.querySelector(`[data-up="${had}"]`); if (b) b.focus({ preventScroll: true }); } }   // a boss opened or moved a row
+  const cl = document.getElementById('tw-capline'); if (cl && cl.textContent !== capLine(g)) { cl.textContent = capLine(g); cl.setAttribute('aria-label', capLine(g)); }
   for (const r of focusShown(g).open) patch('up:' + r[0], focusParts(g, r));
   for (const k of TALENTS) patch('tal:' + k, talentParts(g, k));
   patch('respec', respecParts(g));
@@ -397,7 +404,8 @@ function updateUi(m, now) {
 const R_HEX = { common: PAL.steelL, rare: PAL.blueL, epic: PAL.purL };
 export function closeLoot() { const el = document.getElementById('tw-live'); if (el) el.innerHTML = ''; if (M) { M.msgAt = 0; M.loot = null; } }
 const unlockNames = (ids) => (ids || []).map((id) => FOCUS_NAME[id]).filter(Boolean);
-export const unlockHtml = (ids) => { const n = unlockNames(ids); return n.length ? `<div class="tw-sub tw-lkey tw-lunlock"><span aria-hidden="true">&#128275;</span> New Focus upgrade${n.length > 1 ? 's' : ''}: ${esc(n.join(', '))}</div>` : ''; };
+const CAPS_TXT = `Focus caps raised: max levels +${Math.round(CONFIG.capPct * 100)}%`;
+export const unlockHtml = (ids, capsUp = false) => { const n = unlockNames(ids), l = (t) => `<div class="tw-sub tw-lkey tw-lunlock"><span aria-hidden="true">&#128275;</span> ${t}</div>`; return (capsUp ? l(esc(CAPS_TXT)) : '') + (n.length ? l(`New Focus upgrade${n.length > 1 ? 's' : ''}: ${esc(n.join(', '))}`) : ''); };
 export function lootHtml(g, rec, kicker = 'Boss down', extra = '') {
   const it = rec, cur = g.gear[it.slot], stashed = !it.equipped && !!findItem(g, it.id), off = !stashed || !!(cur && cur.lock);
   return `<div class="tw-loot" role="group" aria-label="${esc(`${kicker === 'Boss down' ? 'Boss loot' : kicker}: ${itemLabel(it)}, ${it.equipped ? 'equipped' : stashed ? 'in the stash' : 'scrapped'}`)}"><div class="tw-lk">${esc(kicker)}</div>
@@ -405,9 +413,9 @@ export function lootHtml(g, rec, kicker = 'Boss down', extra = '') {
     <div class="tw-chips">${chips(it) || '<span class="tw-sub">No traits</span>'}</div>${extra}
     <div class="tw-lb"><button class="btn sm" data-act="lootEquip" data-id="${it.id}" aria-label="${off ? (it.equipped ? 'Already equipped' : cur && cur.lock ? 'Cannot equip, the equipped item is locked' : 'Cannot equip') : `Equip ${esc(itemLabel(it))}`}" ${off ? 'disabled' : ''}>${it.equipped ? 'Equipped' : 'Equip'}</button><button class="btn sm soft" data-act="lootKeep" aria-label="Keep it and close">Keep</button></div></div>`;
 }
-function showLoot(m, rec, unlocked = []) {
+function showLoot(m, rec, unlocked = [], capsUp = false) {
   const el = document.getElementById('tw-live'); if (!el) return;
-  m.loot = rec; el.innerHTML = lootHtml(m.g, rec, 'Boss down', unlockHtml(unlocked));
+  m.loot = rec; el.innerHTML = lootHtml(m.g, rec, 'Boss down', unlockHtml(unlocked, capsUp));
   const b = el.querySelector('button:not([disabled])'); if (b) b.focus({ preventScroll: true });
   if (m.tone) m.tone(true);
 }

@@ -411,7 +411,7 @@ test('Stamina (endurance): +10% Sweat per level on session sweat only', () => {
   G.syncRewards(a); G.syncRewards(b); G.syncRewards(c);
   assert.equal(a.game.paid['s:' + a.sessions[0].id], 105); assert.equal(b.game.paid['s:' + b.sessions[0].id], Math.round(105 * 1.3)); assert.equal(c.game.paid['s:' + c.sessions[0].id], Math.round(105 * 1.5));
   assert.equal(c.game.paid['e:lv'], 300);   // events are not multiplied
-  assert.equal(G.focusMax('endurance'), 5);
+  assert.equal(G.focusMax(G.ensureGame({}), 'endurance'), 5);
 });
 
 test('offline: sets the away summary once, moves lastTick, skips short trips', () => {

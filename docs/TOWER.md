@@ -126,10 +126,21 @@ Costs are in Focus: ceil(base × grow^level). The first 5 are always open. The r
 | Overkill (`overkill`) | +5% crit damage | 10 | 40 × 1.25^L | floor 70 boss |
 | Time Dilation (`dilation`) | +5 s boss timer | 4 | 60 × 1.4^L | floor 80 boss |
 | Ascendant (`ascendant`) | +1 soul per ascension | 3 | 100 × 1.8^L | floor 100 boss |
+| Fortify (`fortify`) | +3% Health | 10 | 20 × 1.2^L | floor 90 boss |
+| Keen Edge (`keen`) | +3% Attack | 10 | 20 × 1.2^L | floor 110 boss |
+| Gilded Keys (`gilded`) | +5% chance a paid session gives 1 extra key (cap 100%) | 5 | 80 × 1.35^L | floor 130 boss |
+| Echo (`echo`) | +3% chance a boss drops a second item (cap 30%) | 5 | 100 × 1.4^L | floor 150 boss |
 
 - **Boss record:** `game.bossBest` is the highest boss floor ever beaten. It is set when a boss falls (live or offline) and survives ascension. Old saves start with the last multiple of 10 below `bestFloor`. A buy is refused while `bossBest` is under the upgrade's `need` (`focusOpen`).
 - **Unlock news:** `advance()` returns `unlocked` (ids a new record opened). The live loot card adds "New Focus upgrade: Thornmail" and the away summary (`away.unlocked`) says the same.
 - **Cost of everything** (all new ones at max, without Precision) is about 9,800 Focus, so about 2,000 buys the cheap survival upgrades and a few of the later ones, not the lot.
+
+### Level caps
+`CONFIG.capBosses` = [30, 60, 90, 120, 150]. Each milestone `game.bossBest` has reached raises every upgrade's max (`focusMax(g, up)`). Default: +50% of the base max, rounded up (10: 15, 20, 25, 30, 35; 5: 8, 11, 14, 17, 20). `capStep` overrides: Key Ring, Time Dilation, Ascendant +1 (Key Ring tops out at 8), Stamina +2, Second Breath +2, Treasure Sense +2, Luck +5. An upgrade with an effect `cap` (Forge Mastery 75%, Treasure Sense 60%, Echo 30%, Gilded Keys 100%) never offers levels past it. Cost keeps growing as grow^level, so the high levels are the Focus sink. Caps never fall (bossBest is lifetime) and saves are clamped to the current cap on load.
+- **Guards:** damage taken never under 40% (Guard and Iron Skin together, `dmgMin`), lifesteal total (gear, sets, Second Breath) at most 30%, epic chance at most 75% (`epicMax`), crit chance at most 100% (`critMax`), Training bonus at most 30% (as before).
+- **Gilded Keys:** the extra key is rolled once per session, when its key is first paid: a hash of the session id against the chance. The result is stored in `paid['ks:id']`, so re-syncing never changes it. Keys still stop at the key cap and the daily limit of 2 paying sessions.
+- **Echo:** after a boss drop, one more roll; success gives a second item (it also rolls Treasure Sense).
+- **News:** `advance()` also returns `capsUp` when a new record crossed a milestone. The loot card and the away summary say "Focus caps raised: max levels +50%". Rows at max with a higher cap coming say "Max for now. Rises to 20 at the floor 90 boss"; a line under the header says "Next cap raise: floor 60 boss (+50% max levels)".
 - **Sense:** rolls one extra die per boss kill, only when the level is above 0.
 
 ## Soul tree
@@ -259,3 +270,7 @@ With the trainer taking 1 rest day a week the longest stall rose to 6 days, so A
 
 ## Tuning log (Focus tree)
 New Focus upgrades with the trainer spending 60 Focus a day: floor 54 at day 7 (main 51), 94 at day 30 (main 85), 110 at day 60 (main 108), longest stall 4 days. Non-trainer still stuck at 15. Base costs started at 40 to 200 and were halved after the first pass left the trainer stalling 6 to 8 days at the floor 110 boss; stalls near that wall are knife-edge (4 to 9 days when Focus a day varies 45 to 75), and the main build also stalls 9 to 11 days at floors 110 to 117 once the sim runs past day 60. Only the new `focusUp` entries were added, no other CONFIG value changed.
+
+
+### Level caps and 4 more upgrades (sim, 120 days, 60 Focus a day)
+Trainer: floor 54 at day 7, 93 at day 30, 113 at day 60 (main 110), 132 at day 120 (+19 over days 60 to 120). Longest stall before day 60: 4 days (9 days later on). Non-trainer stays on floor 15. Fortify and Keen Edge at 60 base / 1.25 stalled the trainer 8 to 11 days around floor 101, so they cost 20 base, growing 1.2.
