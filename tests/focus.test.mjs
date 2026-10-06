@@ -126,3 +126,10 @@ test('the loot card carries the unlock line', () => {
   const g = game({ floor: 30, stats: STRONG, bossBest: 20 }), sum = G.advance(g, 60, () => 0.9, { stopAt: 31 }); assert.deepEqual(sum.unlocked, ['thorn']);
   const card = V.lootHtml(g, sum.drops[0], 'Boss down', V.unlockHtml(sum.unlocked)); assert.match(card, /New Focus upgrade: Thornmail/);
 });
+
+test('Overkill row warns when there is no crit chance', async () => {
+  const V = await import('../js/game/view.js'), G = await import('../js/game/engine.js');
+  const s = { sessions: [], events: [], fasts: [], settings: {} }, g = G.ensureGame(s); g.bossBest = 100;
+  assert.match(V.viewTower(s), /No effect until you have crit chance/);
+  g.focusUp.precision = 1; assert.doesNotMatch(V.viewTower(s), /No effect until you have crit chance/);
+});

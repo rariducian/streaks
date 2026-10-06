@@ -180,7 +180,7 @@ FOCUS_ROWS.push(
   ['warlord', "Warlord's Edge", (g) => `+${pp('warlord')}% damage to bosses (now +${Math.round(fx(g, 'warlord') * 100)}%)`], ['breath', 'Second Breath', (g) => `+${pp('breath')}% lifesteal (now +${Math.round(fx(g, 'breath') * 100)}%)`],
   ['thorn', 'Thornmail', (g) => `+${pp('thorn')}% thorns (now +${Math.round(fx(g, 'thorn') * 100)}%)`], ['mastery', 'Forge Mastery', (g) => `-${pp('mastery')}% forge cost (now -${Math.round(fx(g, 'mastery') * 100)}%)`],
   ['sense', 'Treasure Sense', (g) => `+${pp('sense')}% chance a boss drop is one tier higher (now ${Math.round(fx(g, 'sense') * 100)}%)`], ['ring', 'Key Ring', (g) => `+${FU.ring.per} key cap (now ${keyCap(g)})`],
-  ['overkill', 'Overkill', (g) => `+${pp('overkill')}% crit damage (now x${Math.round(heroStats(g).critMult * 100) / 100})`], ['dilation', 'Time Dilation', (g) => `+${FU.dilation.per} s boss timer (now ${Math.round(bossTimer(g))} s)`],
+  ['overkill', 'Overkill', (g) => `+${pp('overkill')}% crit damage (now x${Math.round(heroStats(g).critMult * 100) / 100})${heroStats(g).crit > 0 ? '' : '. No effect until you have crit chance: buy Precision first'}`], ['dilation', 'Time Dilation', (g) => `+${FU.dilation.per} s boss timer (now ${Math.round(bossTimer(g))} s)`],
   ['ascendant', 'Ascendant', (g) => `+${FU.ascendant.per} soul per ascension (now +${fx(g, 'ascendant')})`]
 );
 const FOCUS_NAME = Object.fromEntries(FOCUS_ROWS.map((r) => [r[0], r[1]]));
