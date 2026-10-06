@@ -1,5 +1,5 @@
 // Tower tab: HTML view plus the battle canvas. Isometric stone floor, chibi units, drawn at art resolution then scaled up crisp.
-import { CONFIG, SLOTS, SLOT_STAT, TALENTS, ensureGame, heroStats, fight, advance, offlineCatchUp, statCost, focusCost, focusMax, canAscend, soulsFor, isBoss, power, forgeCost, forgeBlock, stashMax, soulsLeft, talentCost, canRespec, lookOf, inventory, compareItem, findItem } from './engine.js';
+import { CONFIG, SLOTS, SLOT_STAT, TALENTS, ensureGame, heroStats, fight, advance, offlineCatchUp, statCost, focusCost, focusMax, canAscend, soulsFor, isBoss, atDoor, power, forgeCost, forgeBlock, stashMax, soulsLeft, talentCost, canRespec, lookOf, inventory, compareItem, findItem } from './engine.js';
 import { getSprite, getHero, iconInfo, PAL, hexA } from './sprites.js';
 import { AW, PAD, AH, HERO, FOE, mk, sceneFor, zoneOf, enemyKind, enemyName, isElite, traitLine, glow, hash } from './scene.js';
 
@@ -189,15 +189,18 @@ function respecParts(g) {
 }
 const respecRow = (g) => { const p = respecParts(g);
   return `<div class="tw-row" data-row="respec"><div class="tw-main">${p.main}</div><button class="btn sm soft tw-buy" data-act="respec" aria-label="${esc(p.label)}" ${p.off ? 'disabled' : ''}>${p.txt}</button></div>`; };
+const WAIT_TXT = 'Waiting at the boss door. Train to earn a key.';
 export function awayHtml(a) {
   if (!a) return '';
   const hrs = a.seconds >= 3600 ? `${Math.round(a.seconds / 360) / 10} h` : `${Math.round(a.seconds / 60)} min`;
   const best = a.best ? ` Best drop: ${esc(a.best.rarity)} ${esc(SLOT_NAME[a.best.slot].toLowerCase())}, +${pct(a.best.bonus)}${a.best.power ? `, power ${Math.round(a.best.power * 10) / 10}` : ''}${a.best.equipped ? ' (equipped)' : ' (in the stash)'}.` : '';
-  return `<div class="note tw-away"><h3>While you were away</h3><p>${hrs}${a.capped ? ' (the most it can count)' : ''}: your hero climbed ${a.floors} floor${a.floors === 1 ? '' : 's'} to floor ${a.to} and beat ${a.bosses} boss${a.bosses === 1 ? '' : 'es'}.${best}</p></div>`;
+  return `<div class="note tw-away"><h3>While you were away</h3><p>${hrs}${a.capped ? ' (the most it can count)' : ''}: your hero climbed ${a.floors} floor${a.floors === 1 ? '' : 's'} to floor ${a.to} and beat ${a.bosses} boss${a.bosses === 1 ? '' : 'es'}.${best}${a.waiting ? ` ${WAIT_TXT}` : ''}</p></div>`;
 }
+export const keysLabel = (n) => `${n} boss key${n === 1 ? '' : 's'}`;
 const badgeText = (g) => {
   const z = zoneOf(g.floor).name, k = CONFIG.bossEvery - (g.floor % CONFIG.bossEvery), gr = g.grit >= 0.005 ? Math.round(g.grit * 100) : 0;
-  return `<span class="bl">${z} &middot; Floor ${g.floor} &middot; ${isBoss(g.floor) ? 'Boss' : `boss in ${k}`}${gr ? ` &middot; Grit +${gr}%` : ''}</span><span class="bs">${z} &middot; F${g.floor} &middot; ${isBoss(g.floor) ? 'boss' : `boss ${k}`}${gr ? ` &middot; +${gr}%` : ''}</span>`;
+  const kc = `<span class="bk" role="img" aria-label="${keysLabel(g.keys)}"><span aria-hidden="true">&#128273;</span> ${g.keys}</span>`, door = atDoor(g);
+  return `${kc}<span class="bl">${z} &middot; Floor ${g.floor} &middot; ${isBoss(g.floor) ? (door ? 'Boss door' : 'Boss') : `boss in ${k}`}${gr ? ` &middot; Grit +${gr}%` : ''}</span><span class="bs">${z} &middot; F${g.floor} &middot; ${isBoss(g.floor) ? (door ? 'door' : 'boss') : `boss ${k}`}${gr ? ` &middot; +${gr}%` : ''}</span>`;
 };
 // Narrow screens (or a long zone name) get the short text.
 function fitBadge(b) {
@@ -207,6 +210,7 @@ function fitBadge(b) {
 // 'Crypt, floor 34: your hero fights a ghost. Crypt: enemies regenerate. Burst damage helps.'
 export function canvasLabel(g) {
   const n = enemyName(g.floor, isBoss(g.floor)), who = isBoss(g.floor) ? `the ${n}` : `${/^[aeiou]/.test(n) ? 'an' : 'a'} ${n}`;
+  if (atDoor(g)) return `${zoneOf(g.floor).name}, floor ${g.floor}: your hero waits at the closed door of ${who}. Train to earn a boss key.`;
   return `${zoneOf(g.floor).name}, floor ${g.floor}: your hero fights ${who}. ${traitLine(g.floor)}`;
 }
 export function viewTower(state) {
@@ -214,8 +218,8 @@ export function viewTower(state) {
   const cur = (ic, nm, key, v) => `<div class="tw-cur" role="group" data-twg="${key}" aria-label="${nm} ${Math.round(v)}"><span class="tw-ci" aria-hidden="true">${ic}</span><b class="tnum" data-tw="${key}" aria-hidden="true">${fmt(v)}</b><span aria-hidden="true">${nm}</span></div>`;
   const asc = g.tokens > 0 ? `<div class="section"><h2 class="title">Ascend</h2><div class="note tw-asc"><h3>Ascend token &times;${g.tokens}</h3><p>Reset to floor 1 for <b>+${soulsFor(g)} souls</b> (from floor ${g.runMax}). Souls are spent in the Soul tree and kept forever. Your best gear item and any locked items stay. Other slots and unlocked stash items reset. Stats, Focus upgrades and currencies stay.</p>
     <button class="btn sm" data-act="ascend" data-tw-asc ${canAscend(g) ? '' : 'disabled'}>Ascend</button>${canAscend(g) ? '' : `<p class="small muted" style="margin:8px 0 0">Reach floor ${CONFIG.ascendMinFloor} first. You are at ${g.runMax}.</p>`}</div></div>` : '';
-  return `<div class="section"><div class="tw-battle"><div class="tw-badge tnum" id="tw-badge">${badgeText(g)}</div><canvas id="tw-canvas" role="img" data-act="heroTap" aria-label="${esc(canvasLabel(g))}"></canvas></div>
-    <p class="tw-trait" id="tw-trait">${esc(traitLine(g.floor))}</p>
+  return `<div class="section"><div class="tw-battle"><div class="tw-badge tnum" id="tw-badge">${badgeText(g)}</div><canvas id="tw-canvas" role="img" data-act="heroTap" aria-label="${esc(canvasLabel(g))}"></canvas><div class="tw-live" id="tw-live" role="status" aria-live="polite"></div></div>
+    <p class="tw-trait" id="tw-trait">${esc(traitLine(g.floor))}</p><p class="tw-wait" id="tw-wait" ${atDoor(g) ? '' : 'hidden'}>${WAIT_TXT}</p>
     <div id="tw-away">${awayHtml(g.away)}</div>
     <div class="tw-curs">${cur('&#9889;', 'Sweat', 'sweat', g.sweat)}${cur('&#9670;', 'Focus', 'focus', g.focus)}${cur('&#10022;', 'Souls', 'souls', soulsLeft(g))}</div></div>
   <div class="section"><h2 class="title">Hero</h2><div class="tw-card">${['atk', 'hp', 'spd'].map((s) => statRow(g, s)).join('')}</div></div>
@@ -223,7 +227,7 @@ export function viewTower(state) {
   <div class="section"><h2 class="title">Focus upgrades</h2><div class="tw-card">${FOCUS_ROWS.map((r) => focusRow(g, r)).join('')}</div><p class="small muted tw-note">Spend Focus on the Forge too: tap a gear slot above.</p></div>
   <div class="section"><h2 class="title">Soul tree</h2><div class="tw-card" id="tw-souls">${TALENTS.map((k) => talentRow(g, k)).join('')}${respecRow(g)}</div></div>
   ${asc}
-  <div class="section"><h2 class="title">How you earn</h2><div class="tw-card tw-how"><p><b><span aria-hidden="true">&#9889;</span> Sweat</b> from training. Full session 100, minimum day 40, times your streak bonus (up to &times;1.5). Only 2 sessions a day pay, the 2nd half.</p><p><b>&#9889; Bonus</b> level-up +300 and an Ascend token, new best +100.</p><p><b>&#9670; Focus</b> from fasts that reach your &ldquo;counts after&rdquo; hours: 30, plus 5 for each extra hour, up to 80.</p><p><b>&#10022; Souls</b> from ascending, spent on talents. Missed days cost nothing. The hero keeps climbing.</p></div></div>`;
+  <div class="section"><h2 class="title">How you earn</h2><div class="tw-card tw-how"><p><b><span aria-hidden="true">&#9889;</span> Sweat</b> from training. Full session 100, minimum day 40, times your streak bonus (up to &times;1.5). Only 2 sessions a day pay, the 2nd half.</p><p><b>&#9889; Bonus</b> level-up +300 and an Ascend token, new best +100.</p><p><b>&#9670; Focus</b> from fasts that reach your &ldquo;counts after&rdquo; hours: 30, plus 5 for each extra hour, up to 80.</p><p><b><span aria-hidden="true">&#128273;</span> Boss keys</b> from training: 1 for each session (the first 2 a day, minimum days count) and 1 more for a level-up. A boss needs a key. You hold up to ${CONFIG.keyCap}, and a lost boss fight keeps its key.</p><p><b>&#10022; Souls</b> from ascending, spent on talents. Missed days cost nothing. The hero keeps climbing.</p></div></div>`;
 }
 
 const R = (x, c, X, Y, w, h) => { x.fillStyle = c; x.fillRect(X, Y, w, h); };
@@ -246,9 +250,23 @@ function bar(x, cx, y, w, f, col, ghost = f) {   // f is the real fill, ghost is
   R(x, col, cx - w / 2, y, fw, 3); R(x, hexA(PAL.white, 0.35), cx - w / 2, y, fw, 1);
 }
 
+// The boss door: stone posts and lintel, iron bars, a gold padlock. Drawn over the boss while the hero waits for a key.
+function gate(x, cx, by) {
+  const w = 32, h = 40, X = cx - w / 2, Y = by - h, mid = Y + 22;
+  R(x, PAL.ink, X - 1, Y - 2, w + 2, h + 2);
+  R(x, hexA(PAL.coolD, 0.7), X + 3, Y + 3, w - 6, h - 3);
+  for (let i = 6; i < w - 5; i += 4) { R(x, PAL.coolM, X + i, Y + 3, 2, h - 3); R(x, PAL.coolL, X + i, Y + 3, 1, h - 3); }
+  R(x, PAL.coolM, X + 3, mid, w - 6, 3); R(x, PAL.coolL, X + 3, mid, w - 6, 1);
+  R(x, PAL.coolM, X, Y, 3, h); R(x, PAL.coolL, X, Y, 1, h); R(x, PAL.coolM, X + w - 3, Y, 3, h); R(x, PAL.coolD, X + w - 1, Y, 1, h);
+  R(x, PAL.coolL, X - 1, Y - 2, w + 2, 4); R(x, PAL.coolM, X - 1, Y + 1, w + 2, 1);
+  R(x, PAL.ink, cx - 4, mid - 1, 8, 8); R(x, PAL.goldM, cx - 3, mid, 6, 6); R(x, PAL.goldL, cx - 3, mid, 6, 1); R(x, PAL.woodM, cx - 1, mid + 2, 2, 3);
+  R(x, PAL.goldL, cx - 2, mid - 3, 1, 3); R(x, PAL.goldL, cx + 1, mid - 3, 1, 3); R(x, PAL.goldM, cx - 2, mid - 4, 4, 1);
+}
+
 /* ---------- live loop ---------- */
 let M = null;
 const PAINT_MS = 1000 / 20 - 2;   // about 20 fps
+const HITSTOP_MS = 80, SHAKE_MS = 240, SHAKE_PX = 2.5;   // live boss kill: freeze, then shake the screen 2 to 3 px
 const STRIKE_MS = 190, HURT_MS = 140;   // strike frame length after the windup, and how long the hurt frame shows
 const FIGHT = CONFIG.rest * 0.7, KO_AT = FIGHT + 0.15, EASE_MS = 130, GHOST_HOLD = 380, LIFT = { bat: 9, wisp: 6 };   // a lost try: fight for 7 s, hero falls just after, then the rest pause
 export const towerMounted = () => !!M;
@@ -259,13 +277,14 @@ export function unmountTower() {
   M = null;
 }
 const newBar = () => ({ v: 1, from: 1, t0: 0, ghost: 1, hit: -1e9 });
-export function mountTower(state, save) {
+// opts.live: the boss floor to play as the live fight (hit-stop, shake, loot card). opts.tone(ok): the app plays a short tone.
+export function mountTower(state, save, opts = {}) {
   unmountTower();
   const cv = document.getElementById('tw-canvas'); if (!cv) return;
   const g = ensureGame(state), now = Date.now();
   const [art, a] = mk(AW + 2 * PAD, AH), ctx = cv.getContext('2d');
   const rm = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const m = M = { state, g, save, cv, ctx, art, a, scene: sceneFor(g.floor), rm, raf: 0, floor: g.floor, spawnT: now - 1000, S: null, key: '', hi: 0, fi: 0, hl: 0, fl: 0, lastProg: 0, eb: newBar(), hb: newBar(), down: 0, hLunge: -1e9, fLunge: -1e9, hFlash: -1e9, fFlash: -1e9, floats: [], lastSave: now, lastUi: 0, drawn: 0, vis: true, io: null, gearSig: '', cw: 0, ch: 0 };
+  const m = M = { state, g, save, cv, ctx, art, a, scene: sceneFor(g.floor), rm, raf: 0, floor: g.floor, spawnT: now - 1000, S: null, key: '', hi: 0, fi: 0, hl: 0, fl: 0, lastProg: 0, eb: newBar(), hb: newBar(), down: 0, hLunge: -1e9, fLunge: -1e9, hFlash: -1e9, fFlash: -1e9, floats: [], lastSave: now, lastUi: 0, drawn: 0, vis: true, io: null, gearSig: '', cw: 0, ch: 0, live: opts.live ? { floor: opts.live, done: false } : null, tone: opts.tone || null, freeze: 0, shake: -1e9, msgAt: 0, loot: null };
   m.onVis = () => { if (document.visibilityState === 'hidden') { try { save(state); m.lastSave = Date.now(); } catch (e) { /* ignore */ } } };
   document.addEventListener('visibilitychange', m.onVis);
   if (g.away) { g.away = null; try { save(state); } catch (e) { /* ignore */ } }   // the banner shows once
@@ -277,6 +296,7 @@ export function mountTower(state, save) {
 }
 function tick(m) {
   const { g } = m, now = Date.now();
+  if (now < m.freeze) { g.lastTick = now; return; }   // hit-stop: the whole fight holds for a beat on the killing blow
   let dt = (now - g.lastTick) / 1000;
   if (dt < 0) { g.lastTick = now; dt = 0; }
   if (dt > 30) {   // phone slept or tab was away: use the offline sim and show the banner
@@ -285,7 +305,7 @@ function tick(m) {
     m.key = ''; updateUi(m, now);
   } else if (dt > 0) {
     const s = advance(g, dt); g.lastTick = now;
-    if (s.drops.length) m.lastUi = 0;
+    if (s.drops.length) { m.lastUi = 0; if (m.live && !m.live.done && s.bosses) { m.live.done = true; showLoot(m, s.drops[s.drops.length - 1]); } }
   }
   if (now - m.lastSave > 5000) { try { m.save(m.state); } catch (e) { /* ignore */ } m.lastSave = now; }
   if (now - m.lastUi > 1000) updateUi(m, now);
@@ -320,6 +340,29 @@ function updateUi(m, now) {
   const b = document.getElementById('tw-badge'); if (b) { const t = badgeText(g); if (b.innerHTML !== t) b.innerHTML = t; fitBadge(b); }
   const lb = canvasLabel(g); if (m.cv.getAttribute('aria-label') !== lb) m.cv.setAttribute('aria-label', lb);
   const tl = document.getElementById('tw-trait'), tt = traitLine(g.floor); if (tl && tl.textContent !== tt) tl.textContent = tt;
+  const wt = document.getElementById('tw-wait'); if (wt) wt.hidden = !atDoor(g);
+  if (m.msgAt && now - m.msgAt > 10000) closeLoot();   // the lost-fight note fades after 10 s
+}
+// The loot card and the lost-fight note live in #tw-live over the canvas.
+const R_HEX = { common: PAL.steelL, rare: PAL.blueL, epic: PAL.purL };
+export function closeLoot() { const el = document.getElementById('tw-live'); if (el) el.innerHTML = ''; if (M) { M.msgAt = 0; M.loot = null; } }
+export function lootHtml(g, rec) {
+  const it = rec, cur = g.gear[it.slot], stashed = !it.equipped && !!findItem(g, it.id), off = !stashed || !!(cur && cur.lock);
+  return `<div class="tw-loot" role="group" aria-label="${esc(`Boss loot: ${itemLabel(it)}, ${it.equipped ? 'equipped' : stashed ? 'in the stash' : 'scrapped'}`)}"><div class="tw-lk">Boss down</div>
+    <div class="tw-lr"><span class="tw-li" style="border-color:${R_HEX[it.rarity]}">${icon(lookKey(it))}</span><div class="tw-lm"><div class="tw-ln" style="color:${R_HEX[it.rarity]}">${esc(itemName(it))} ${esc(kindOf(it))}</div><div class="tw-lp">${it.rarity} &middot; Power ${pw(it)} &middot; +${pct(it.bonus)} ${STAT_NAME[SLOT_STAT[it.slot]]}</div></div></div>
+    <div class="tw-chips">${chips(it) || '<span class="tw-sub">No traits</span>'}</div>
+    <div class="tw-lb"><button class="btn sm" data-act="lootEquip" data-id="${it.id}" aria-label="${off ? (it.equipped ? 'Already equipped' : cur && cur.lock ? 'Cannot equip, the equipped item is locked' : 'Cannot equip') : `Equip ${esc(itemLabel(it))}`}" ${off ? 'disabled' : ''}>${it.equipped ? 'Equipped' : 'Equip'}</button><button class="btn sm soft" data-act="lootKeep" aria-label="Keep it and close">Keep</button></div></div>`;
+}
+function showLoot(m, rec) {
+  const el = document.getElementById('tw-live'); if (!el) return;
+  m.loot = rec; el.innerHTML = lootHtml(m.g, rec);
+  const b = el.querySelector('button:not([disabled])'); if (b) b.focus({ preventScroll: true });
+  if (m.tone) m.tone(true);
+}
+function showLost(m) {
+  const el = document.getElementById('tw-live'); if (!el) return;
+  el.innerHTML = '<div class="tw-lose">Not this time. Upgrade and try again. Your key is kept for this boss.</div>'; m.msgAt = Date.now();
+  if (m.tone) m.tone(false);
 }
 
 /* ---------- the visual fight: discrete hits that add up to what the sim says ---------- */
@@ -353,6 +396,7 @@ function sync(m, f, now, dt) {
   while (m.fl < S.foe.length && S.foe[m.fl].t - 0.11 <= p) { if (fx && !stale(S.foe[m.fl].t)) m.fLunge = now; m.fl++; }
   while (m.hi < S.hero.length && S.hero[m.hi].t <= p) {
     const k = S.hero[m.hi++], q = stale(k.t); drop(m.eb, k.d / e.hp, now, q);
+    if (!q && m.live && !m.live.done && e.boss && f.win && g.floor === m.live.floor && m.hi === S.hero.length) { m.freeze = now + HITSTOP_MS; m.shake = now; }   // the killing blow of the live fight
     if (!q) { m.fFlash = now; if (m.floats.length < 10) m.floats.push({ s: fmt(k.d) + (k.c ? '!' : ''), x: FOE[0] + Math.round(Math.random() * 10 - 5), y: FOE[1] - (e.boss ? 46 : 40), t: now, c: k.c ? PAL.goldL : PAL.white, sc: k.c ? 2 : 1 }); }
   }
   while (m.fi < S.foe.length && S.foe[m.fi].t <= p) {
@@ -362,6 +406,7 @@ function sync(m, f, now, dt) {
   if (S.ko !== null && p >= S.ko && !m.down) {   // knocked down
     m.down = fx && p - S.ko < 0.35 ? now : now - 1000; drop(m.hb, 1, now, !fx || p - S.ko > 0.35);
     if (fx && p - S.ko < 0.35) m.floats.push({ s: 'KO', x: HERO[0], y: HERO[1] - 42, t: now, c: PAL.redL, sc: 1 });
+    if (m.live && !m.live.done && e.boss && g.floor === m.live.floor) { m.live.done = true; showLost(m); }
   }
   for (const b of [m.eb, m.hb]) {   // the ghost holds a moment after a hit, then catches up
     const cur = shown(b, now, m.rm);
@@ -381,7 +426,7 @@ function paint(m, now, dt = 0) {
   if (fx) flicker(m, now);
   const dying = win && p >= f.t, alive = win ? p < f.t + 0.5 : true;
   const spawn = Math.min(1, (now - m.spawnT) / 350), eA = fx ? (dying ? Math.max(0, 1 - (p - f.t) / 0.5) : 1) * spawn : (dying ? 0 : 1);
-  const down = !!m.down, walking = win && dying && fx;
+  const door = atDoor(g), down = !!m.down, walking = win && dying && fx;
   const bobH = walking && !down ? (Math.floor(now / 120) % 2) : 0;   // the walk after a kill: a 1 px hop
   // frames: idle breathes at about 2 fps; each scheduled hit plays windup then strike; being hit shows hurt; KO and death show down. Reduced motion: idle A only, plus down.
   const idle = fx && Math.floor(now / 500) % 2 ? 'idleB' : 'idleA';
@@ -398,9 +443,10 @@ function paint(m, now, dt = 0) {
   a.globalAlpha = 1;
   const ex = Math.round(FOE[0] - es.px + fStep), ey = FOE[1] - es.h + 3 - lift;
   if (alive && eA > 0) { a.globalAlpha = eA; a.drawImage(fx && now - m.fFlash < 80 ? es.flash : es.img, ex - ep, ey - ep); a.globalAlpha = 1; }
+  if (door) gate(a, FOE[0], FOE[1] + 2);   // closed gate in front of the boss while the hero has no key
   // bars: they only move on hits
   if (!down) bar(a, HERO[0], hy + hs.top - 5, 20, shown(m.hb, now, m.rm), PAL.greenM, m.hb.ghost);
-  if (alive && eA > 0.5) bar(a, FOE[0], Math.max(4, ey + es.top - 5), boss ? 28 : 20, shown(m.eb, now, m.rm), PAL.redM, m.eb.ghost);
+  if (!door && alive && eA > 0.5) bar(a, FOE[0], Math.max(4, ey + es.top - 5), boss ? 28 : 20, shown(m.eb, now, m.rm), PAL.redM, m.eb.ghost);
   // floating numbers
   m.floats = m.floats.filter((fo) => now - fo.t < 900);
   for (const fo of m.floats) { const age = (now - fo.t) / 900; a.globalAlpha = age > 0.7 ? 1 - (age - 0.7) / 0.3 : 1; text(a, fo.s, Math.round(fo.x - textW(fo.s, fo.sc) / 2), Math.round(fo.y - 16 * (1 - (1 - age) ** 2)), fo.c, fo.sc); }
@@ -415,7 +461,7 @@ function blit(m) {
   if (cv.style.height !== ch) cv.style.height = ch;
   if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
   ctx.imageSmoothingEnabled = false;
-  const ox = Math.floor((bw - (AW + 2 * PAD) * s) / 2);
+  const ox = Math.floor((bw - (AW + 2 * PAD) * s) / 2), sk = !m.rm && Date.now() - m.shake < SHAKE_MS, sx = sk ? Math.round((Math.random() * 2 - 1) * SHAKE_PX * dpr) : 0, sy = sk ? Math.round((Math.random() * 2 - 1) * SHAKE_PX * dpr) : 0;
   ctx.fillStyle = PAL.ink; ctx.fillRect(0, 0, bw, bh);
-  ctx.drawImage(m.art, 0, 0, AW + 2 * PAD, AH, ox, 0, (AW + 2 * PAD) * s, bh);
+  ctx.drawImage(m.art, 0, 0, AW + 2 * PAD, AH, ox + sx, sy, (AW + 2 * PAD) * s, bh);
 }

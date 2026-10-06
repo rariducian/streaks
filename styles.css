@@ -485,3 +485,21 @@ body.fv-lock{overflow:hidden}
 .inv-eq{font-style:normal;font-size:0.588rem;font-weight:700;padding:1px 6px;border-radius:99px;background:var(--btn);color:var(--btn-text)}
 .inv-lk{margin-left:auto;width:18px;height:18px;border-radius:50%;background:var(--btn);color:var(--btn-text);display:grid;place-items:center}
 .tw-stashline .btn{min-height:44px}
+
+/* Boss Keys */
+.tw-badge .bk{margin-right:8px;padding-right:8px;border-right:1px solid rgba(241,242,246,.25)}
+.tw-wait{margin:6px 4px 0;font-size:0.794rem;font-weight:650;color:var(--orange-text)}
+.keysec{margin-top:14px}
+.keychip{display:block;width:100%;text-align:left;background:var(--card);border-radius:16px;padding:12px 14px;font-weight:650;font-size:0.882rem;color:var(--text)}
+.tw-live{position:absolute;left:0;right:0;bottom:0;padding:10px;display:flex;justify-content:center;pointer-events:none;z-index:2}
+.tw-live>*{pointer-events:auto}
+.tw-loot{width:100%;max-width:340px;background:rgba(28,21,48,.94);color:#fff6e4;border-radius:16px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+.tw-lk{font-size:0.647rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#ffe47e}
+.tw-lr{display:flex;align-items:center;gap:12px;margin-top:6px}
+.tw-li{flex:none;display:flex;align-items:center;justify-content:center;min-width:56px;height:56px;border:2px solid;border-radius:12px;background:#343a5a}
+.tw-lm{min-width:0}.tw-ln{font-weight:700;font-size:0.941rem}.tw-lp{font-size:0.765rem;color:#dce6f6}
+.tw-loot .tw-chip{background:#343a5a;color:#fff6e4}.tw-loot .tw-sub{color:#bea68e}
+.tw-lb{display:flex;gap:8px;margin-top:10px}.tw-lb .btn{flex:1}
+.tw-lose{width:100%;max-width:340px;background:rgba(28,21,48,.94);color:#fff6e4;border-radius:14px;padding:10px 14px;font-weight:650;font-size:0.824rem;text-align:center;border:1px solid #b83a44}
+@media (prefers-reduced-motion:no-preference){.tw-loot,.tw-lose{animation:pop .35s}}
+.tw-loot .btn:disabled{opacity:1;background:#343a5a;color:#bea68e}

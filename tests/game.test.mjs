@@ -9,7 +9,7 @@ const fresh = () => L.defaultState(D(2026, 1, 1));
 const sess = (st, date, extra = {}) => { const s = structuredClone(st); s.sessions.push({ id: 's' + s.sessions.length + date, date, startedAt: date + 'T0' + (s.sessions.length % 10) + ':00:00', minimum: false, sets: [], ...extra }); return s; };
 const days = (st, from, n, extra) => { let s = st; for (let i = 0; i < n; i++) s = sess(s, L.addDays(from, i), extra); return s; };
 const seq = (...v) => { let i = 0; return () => v[i++ % v.length]; };
-const game = (patch = {}) => { const s = fresh(); const g = G.ensureGame(s); Object.assign(g, patch); return g; };
+const game = (patch = {}) => { const s = fresh(); const g = G.ensureGame(s); Object.assign(g, { keys: 5 }, patch); return g; };   // keys: 5 so older tests can fight bosses. Key tests pass their own
 const close = (a, b, e = 1e-9) => assert.ok(Math.abs(a - b) < e, `${a} vs ${b}`);
 
 test('ensureGame is lazy, fills defaults and keeps existing data', () => {
@@ -641,4 +641,77 @@ test('forge works on a stashed item (the inventory forge), and only changes stat
   assert.equal(G.forge(g, 'weapon', 'temper', 0, Math.random, it), true); assert.equal(it.lvl, 1); assert.equal(G.heroStats(g).atk, before); assert.equal(g.gear.weapon.lvl, 0);
   assert.equal(G.forge(g, 'weapon', 'upgrade', 0, seq(0.5), it), true); assert.equal(it.rarity, 'rare'); assert.equal(it.look, 'weapon.axe.rare');
   const sh = V.gearSheet(g, 'weapon', '', it.id); assert.equal(sh.title, 'Weapon'); const btns = sh.body.match(/<button[^>]*>/g); assert.ok(btns.every((b) => /aria-label="[^"]+"/.test(b)));
+});
+
+// ---------- Boss Keys ----------
+const STRONG = { atk: 200, hp: 200, spd: 50 };
+test('keys: a paid session gives 1, paid once, the daily limit and minimum days count', () => {
+  let s = sess(fresh(), '2026-02-01', { minimum: true }); const r = G.syncRewards(s); assert.equal(r.keys, 1); assert.equal(s.game.keys, 1);
+  assert.equal(G.syncRewards(s).keys, 0); assert.equal(s.game.keys, 1);   // idempotent
+  s = sess(s, '2026-02-01'); G.syncRewards(s); assert.equal(s.game.keys, 2);   // 2nd of the day pays
+  s = sess(s, '2026-02-01'); G.syncRewards(s); assert.equal(s.game.keys, 2);   // 3rd does not
+  assert.equal(G.syncRewards(store.importJSON(store.exportJSON(s))).keys, 0);   // import and reload do not pay again
+});
+test('keys: a level-up gives 1 more, once, and the cap is 5', () => {
+  const s = sess(fresh(), '2026-02-01'); s.events.push({ id: 'a', type: 'levelUp' }, { id: 'b', type: 'pb' }); G.syncRewards(s);
+  assert.equal(s.game.keys, 2); G.syncRewards(s); assert.equal(s.game.keys, 2);
+  const g = s.game, t = days(s, '2026-02-02', 8); G.syncRewards(t); assert.equal(t.game.keys, G.CONFIG.keyCap); assert.equal(G.CONFIG.keyCap, 5);
+  const more = sess(t, '2026-03-01'); G.syncRewards(more); assert.equal(more.game.keys, 5); assert.equal(g, s.game);
+});
+test('keys: the welcome grant pays at most 3 for old history, and old saves start with 1 on top', () => {
+  const s = days(fresh(), '2026-02-01', 9); s.events.push({ id: 'a', type: 'levelUp' });
+  const r = G.syncRewards(s); assert.equal(r.keys, 3); assert.equal(s.game.keys, 3); assert.equal(G.syncRewards(s).keys, 0);
+  const next = sess(s, '2026-03-01'); G.syncRewards(next); assert.equal(next.game.keys, 4);   // after the welcome, sessions pay 1 each
+  const old = fresh(); old.game = { sweat: 50, floor: 12, paid: {} };   // a save from before keys
+  assert.equal(G.ensureGame(old).keys, G.CONFIG.migrateKeys); const hist = days(old, '2026-02-01', 6); G.syncRewards(hist); assert.equal(hist.game.keys, 4);   // 1 + the welcome 3
+  const fr = fresh(); assert.equal(G.ensureGame(fr).keys, 0);
+  const few = sess(fresh(), '2026-02-01'); G.syncRewards(few); assert.equal(few.game.keys, 1);
+});
+test('boss door: no key means waiting, no grit, no retries, and time passes with no progress', () => {
+  const g = game({ floor: 10, keys: 0, stats: STRONG }); assert.equal(G.atDoor(g), true);
+  const sum = G.advance(g, 3600, () => 0.9); assert.equal(g.floor, 10); assert.equal(sum.floors, 0); assert.equal(g.waiting, true); assert.equal(g.grit, 0); assert.equal(g.prog, 0); assert.equal(g.keys, 0);
+  const weak = game({ floor: 10, keys: 0 }); G.advance(weak, 3600); assert.equal(weak.grit, 0, 'no grit at the door');
+  const mid = game({ floor: 8, keys: 0, stats: STRONG }); G.advance(mid, 600, () => 0.9); assert.equal(mid.floor, 10); assert.equal(mid.waiting, true);   // normal floors are never gated
+  g.keys = 1; G.advance(g, 60, () => 0.9); assert.equal(g.floor, 20); assert.equal(g.keys, 0); assert.equal(g.waiting, true);   // one key, one boss, then the next door
+});
+test('boss door: the key is spent once per boss, so retries are free until it falls', () => {
+  const g = game({ floor: 30, keys: 2, stats: { atk: 0, hp: 0, spd: 0 } }); assert.equal(G.fight(g, 30).win, false);
+  G.advance(g, 35, () => 0); assert.equal(g.keys, 1); assert.equal(g.keyFor, 30);   // first try spends it
+  G.advance(g, 3000, () => 0); assert.equal(g.keys, 1); assert.equal(g.floor, 30); assert.ok(g.grit > 0);   // many lost tries, still 1
+  assert.equal(G.atDoor(g), false); assert.equal(G.fightFloor(g), 30);
+  g.stats = { ...STRONG }; G.advance(g, 60, () => 0.9); assert.ok(g.floor > 30); assert.notEqual(g.keyFor, 30);
+  const none = game({ floor: 30, keys: 1, stats: { atk: 0, hp: 0, spd: 0 } }); G.advance(none, 5); G.advance(none, 3000, () => 0); assert.equal(none.keys, 0); assert.equal(G.atDoor(none), false);   // key spent, the hero keeps retrying
+});
+test('boss door: offline catch-up waits at the door and says so', () => {
+  const T = 1e9, s = fresh(), g = G.ensureGame(s); Object.assign(g, { floor: 8, keys: 0, lastTick: T, stats: STRONG });
+  const a = G.offlineCatchUp(s, T + 5 * 3600e3, () => 0.9); assert.equal(g.floor, 10); assert.equal(a.waiting, true); assert.equal(a.to, 10); assert.equal(a.bosses, 0); assert.equal(g.keys, 0);
+  const b = G.offlineCatchUp(s, T + 10 * 3600e3, () => 0.9); assert.equal(b, null); assert.equal(g.waiting, true); assert.equal(g.floor, 10);   // still waiting; the note is not repeated
+  assert.match(V.awayHtml(a), /Waiting at the boss door\. Train to earn a key\./);
+  g.keys = 1; const c = G.offlineCatchUp(s, T + 15 * 3600e3, () => 0.9); assert.ok(c.bosses >= 1); assert.equal(c.to, 20); assert.equal(c.waiting, true);   // the key opened floor 10, floor 20 is the next door
+});
+test('summary: the Fight button needs a key (or a spent one) and a boss on this floor or the next 2', () => {
+  const at = (floor, keys, keyFor = 0) => game({ floor, keys, keyFor });
+  assert.equal(G.fightFloor(at(30, 1)), 30); assert.equal(G.fightFloor(at(29, 1)), 30); assert.equal(G.fightFloor(at(28, 1)), 30);
+  assert.equal(G.fightFloor(at(27, 1)), 0); assert.equal(G.fightFloor(at(31, 1)), 0); assert.equal(G.fightFloor(at(38, 1)), 40); assert.equal(G.fightFloor(at(35, 5)), 0);
+  assert.equal(G.fightFloor(at(30, 0)), 0); assert.equal(G.fightFloor(at(29, 0)), 0); assert.equal(G.fightFloor(at(30, 0, 30)), 30);   // a key already spent on this boss still counts
+});
+test('live fight: readyBoss climbs to the door and stops, leaving the boss to be fought live', () => {
+  const T = 1e9, s = fresh(), g = G.ensureGame(s); Object.assign(g, { floor: 8, keys: 1, lastTick: T, stats: STRONG });
+  assert.equal(G.readyBoss(s, 10, T + 3600e3, () => 0.9), true); assert.equal(g.floor, 10); assert.equal(g.keys, 1); assert.equal(g.prog, 0); assert.equal(g.lastTick, T + 3600e3); assert.equal(g.away, null);
+  const weak = G.ensureGame({ game: { floor: 3, keys: 1, lastTick: T } }); assert.equal(G.readyBoss({ game: weak }, 10, T + 10, () => 0.9), false);
+});
+test('boss keys: the badge, Today chip and loot card have accessible labels', () => {
+  assert.equal(V.keysLabel(2), '2 boss keys'); assert.equal(V.keysLabel(1), '1 boss key'); assert.equal(V.keysLabel(0), '0 boss keys');
+  const s = fresh(), g = G.ensureGame(s); g.keys = 2;
+  let html = V.viewTower(s); assert.match(html, /<span class="bk" role="img" aria-label="2 boss keys"><span aria-hidden="true">&#128273;<\/span> 2<\/span>/); assert.match(html, /id="tw-wait" hidden/); assert.match(html, /Boss keys<\/b> from training/);
+  g.keys = 0; g.floor = 10; html = V.viewTower(s); assert.match(html, /aria-label="0 boss keys"/); assert.match(html, /Boss door/); assert.match(html, /id="tw-wait" >Waiting at the boss door\. Train to earn a key\./); assert.match(V.canvasLabel(g), /waits at the closed door/);
+  const rec = G.giveDrop(g, G.rollDrop(g, 10, seq(0.1, 0.5))); assert.ok(Number.isFinite(rec.id));
+  const card = V.lootHtml(g, rec), btns = card.match(/<button[^>]*>/g); assert.equal(btns.length, 2); assert.ok(btns.every((b) => /aria-label="[^"]+"/.test(b))); assert.match(card, /role="group" aria-label="Boss loot: /);
+  assert.match(card, /data-act="lootEquip"/); assert.match(card, /data-act="lootKeep"/);
+});
+
+test('boss door: the away note shows once per door, not every visit', () => {
+  const s = { sessions: [], events: [], fasts: [], settings: {} }; const g = G.ensureGame(s); g.keys = 0; g.kw = true; g.floor = 10; g.runMax = 10; g.lastTick = 1;
+  assert.ok(G.offlineCatchUp(s, 1 + 3600e3, () => 0.5), 'first time at the door');
+  assert.equal(G.offlineCatchUp(s, 1 + 7200e3, () => 0.5), null, 'second visit stays quiet');
 });

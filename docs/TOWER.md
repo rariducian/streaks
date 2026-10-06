@@ -37,6 +37,14 @@ You check in for 1 to 2 minutes after a session, spend points, and look at the c
 - A completed fast that reached the "counts after" hours pays 30 + 5 × whole hours over that minimum, capped at 80.
 - It pays once per fast id.
 
+### Boss Keys
+- A boss needs a key. Normal floors never do.
+- **Earned by training:** each paid session gives 1 (the first 2 sessions on a date, minimum days count, same as Sweat) and each level-up gives 1 more. Paid through `syncRewards`, once each, recorded in `game.paid` as `ks:<session id>` and `ke:<event id>`.
+- **Cap:** 5 held (`CONFIG.keyCap`). Keys over the cap are lost, but still marked paid.
+- **Welcome grant:** the first sync pays history at most 3 keys in total (`welcomeKeys`, flag `kw`), so an old save does not arrive with a pile. Saves from before keys also start with 1 (`migrateKeys`).
+- **At the door:** `advance` on a boss floor with no key (and none already spent on it) waits: no tries, no Grit, time passes with no progress. `game.waiting` records it, `atDoor(g)` computes it. Offline catch-up follows the same rules and the away summary says "Waiting at the boss door. Train to earn a key."
+- **Spending:** the key goes on the first try at that boss (`game.keyFor` = the boss floor). Retries of the same boss are free, so a lost fight never burns a second key. A win clears `keyFor`. Ascending clears it too.
+
 ## Hero
 | Stat | Formula | Upgrade cost (Sweat) |
 |---|---|---|
@@ -137,8 +145,16 @@ The end-of-session summary shows the Sweat that session paid (session plus level
 ## Battery
 The sim advances every frame, but painting is capped at about 20 fps and stops while the canvas is off screen (IntersectionObserver).
 
+## Live boss fight
+- After a session, if the hero is at a boss door or will reach one within 2 floors (`fightFloor`, `CONFIG.fightAhead`) and a key is held (or already spent on that boss), the summary shows "Fight the boss" next to Done and Open Tower.
+- It opens the Tower, climbs to the door with the time away (`readyBoss`, stops at the door) and plays the fight in real time.
+- **Kill:** an 80 ms hit-stop on the last hit, a 2.5 px screen shake for 240 ms (both skipped with reduced motion), then a loot card over the canvas: icon, rarity, power, traits, Equip (the existing `equip`) and Keep. A better item is already equipped by `giveDrop`, so Equip is then shown as done.
+- **Loss:** "Not this time. Upgrade and try again. Your key is kept for this boss." The hero keeps retrying as usual.
+- A short success or failure tone plays if sound is on.
+- **UI:** the badge shows keys (key glyph aria-hidden, label "2 boss keys"). While waiting, the canvas draws a closed gate in front of the boss, the hero idles and a line says so. Today shows a chip under Today's session: "A boss is waiting: train to fight it", or "2 keys: fight the floor 30 boss". It opens the Tower.
+
 ## Tuning
-`node tools/tower-sim.mjs` simulates a daily trainer (greedy buyer, no events) and a player who never trains. The trainer also adds 60 Focus a day and spends it greedily on the Forge. See the sim output for the current numbers; the elite floors are the late walls.
+`node tools/tower-sim.mjs` simulates a daily trainer (greedy buyer, a level-up every 10 days, `LEVELUP=n` to change) and a player who never trains (they only hold the 3 welcome keys). The trainer earns keys from sessions and level-ups and also adds 60 Focus a day and spends it greedily on the Forge. See the sim output for the current numbers; the elite floors are the late walls.
 
 ## Tab UI (phone first)
 1. **Battle panel:** a pixel canvas with the hero on the left and the enemy on the right. The badge reads like "Crypt · Floor 34 · boss in 6", shortened to "Crypt · F34 · boss 6" when the panel is under 340 px or the text would overflow. The trait line sits under the panel. The canvas label names the zone and enemy ("Crypt, floor 34: your hero fights a ghost"). It uses `image-rendering: pixelated`. See "Visual fight" and "Zones" below. With reduced motion it shows still frames: no lunges, floats, bobbing or flicker, and bars step instantly.
@@ -201,7 +217,7 @@ The hero is a paper doll (`heroMap(frame, looks)` in sprites.js): cape (behind),
 
 ## Data
 - Save in `state.game`, created lazily by `ensureGame(state)`.
-- **Fields:** `sweat`, `focus`, `souls`, `tokens`, `stats {atk, hp, spd}`, `focusUp {endurance, precision, luck}`, `floor`, `runMax`, `bestFloor`, `grit`, `gear {weapon, armour, boots}` (items: `id, slot, tier, rarity, bonus, lvl, aff[{id,v}], lock, added, look`; `look` is derived and refilled on load), `stash[]`, `talents{}`, `soulsSpent`, `respecUsed`, `seq`, `drops[]`, `paid{}`, `lastTick`, `away`.
+- **Fields:** `sweat`, `focus`, `souls`, `tokens`, `stats {atk, hp, spd}`, `focusUp {endurance, precision, luck}`, `floor`, `runMax`, `bestFloor`, `grit`, `keys`, `keyFor`, `waiting`, `kw`, `gear {weapon, armour, boots}` (items: `id, slot, tier, rarity, bonus, lvl, aff[{id,v}], lock, added, look`; `look` is derived and refilled on load), `stash[]`, `talents{}`, `soulsSpent`, `respecUsed`, `seq`, `drops[]`, `paid{}`, `lastTick`, `away`.
 - Export and import carry it automatically.
 
 ## Out of scope for v1

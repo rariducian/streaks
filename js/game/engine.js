@@ -33,6 +33,7 @@ export const CONFIG = {
     wind: { max: 3, cost: 3, grow: 1.6, per: 15 }, prospector: { max: 5, cost: 3, grow: 1.4, per: 0.10 }, hoarder: { max: 4, cost: 2, grow: 1.5, per: 1 },
     fortune: { max: 5, cost: 3, grow: 1.4, per: 0.02 }, ancestral: { max: 5, cost: 3, grow: 1.4, per: 0.05 }
   },
+  keyCap: 5, sessionKeys: 1, levelUpKeys: 1, welcomeKeys: 3, migrateKeys: 1, fightAhead: 2,   // Boss Keys: a paid session and a level-up pay keys, history pays at most welcomeKeys, old saves start with migrateKeys. fightAhead: floors before a boss that still offer the live fight
   ascendMinFloor: 20
 };
 export const SLOTS = ['weapon', 'armour', 'boots'];
@@ -47,12 +48,13 @@ export const AFFIXES = Object.keys(CONFIG.affix);
 export const TALENTS = Object.keys(CONFIG.talents);
 
 export function ensureGame(state) {
-  const g = state.game && typeof state.game === 'object' ? state.game : (state.game = {});
+  const had = !!state.game && typeof state.game === 'object', g = had ? state.game : (state.game = {});
   const num = (k, v) => { if (!Number.isFinite(g[k])) g[k] = v; };
   for (const k of ['sweat', 'focus', 'souls', 'tokens', 'grit', 'prog', 'lastTick']) num(k, 0);
   for (const k of ['floor', 'runMax', 'bestFloor']) num(k, 1);
   const obj = (k, d) => { if (!g[k] || typeof g[k] !== 'object' || Array.isArray(g[k])) g[k] = d; };
-  num('soulsSpent', 0); num('seq', 0);
+  num('soulsSpent', 0); num('seq', 0); num('keyFor', 0);
+  num('keys', had ? CONFIG.migrateKeys : 0); g.keys = Math.max(0, Math.min(CONFIG.keyCap, Math.floor(g.keys))); g.waiting = !!g.waiting; g.kw = !!g.kw;   // old saves start with a key. kw: the welcome grant has been paid
   obj('stats', {}); obj('focusUp', {}); obj('gear', {}); obj('paid', {}); obj('talents', {});
   for (const k of ['atk', 'hp', 'spd']) num2(g.stats, k);
   for (const k of Object.keys(CONFIG.focusUp)) { num2(g.focusUp, k); g.focusUp[k] = Math.min(g.focusUp[k], CONFIG.focusUp[k].max); }
@@ -81,13 +83,15 @@ export const streakMult = (streak) => 1 + CONFIG.streakStep * Math.min(streak, C
 export const focusForFast = (hours, minH) => hours >= minH ? Math.min(CONFIG.focusCap, CONFIG.focusBase + CONFIG.focusPerHour * Math.floor(hours - minH + 1e-9)) : 0;
 
 // Pays every session, event and fast not yet in game.paid. Safe to call any number of times.
+// Boss Keys ride the same way ('ks:' per session, 'ke:' per level-up), so old saves with Sweat already paid still get theirs. The first sync is the welcome grant: history pays at most welcomeKeys.
 export function syncRewards(state, now = Date.now()) {
-  const g = ensureGame(state), out = { sweat: 0, focus: 0, tokens: 0, items: 0 }, stam = 1 + CONFIG.staminaPer * (g.focusUp.endurance || 0) + trainBonus(g) + talFx(g, 'prospector');
+  const g = ensureGame(state), out = { sweat: 0, focus: 0, tokens: 0, items: 0, keys: 0 }, stam = 1 + CONFIG.staminaPer * (g.focusUp.endurance || 0) + trainBonus(g) + talFx(g, 'prospector');
   const sessions = (state.sessions || []).map((s, i) => ({ s, i })).sort((a, b) => (a.s.date || '').localeCompare(b.s.date || '') || String(a.s.startedAt || '').localeCompare(String(b.s.startedAt || '')) || a.i - b.i);
-  const dates = trainingDates(state), streakAt = new Map(), seen = new Map();
+  const dates = trainingDates(state), streakAt = new Map(), seen = new Map(); let kp = 0;
   for (const { s } of sessions) {
     const nth = seen.get(s.date) || 0; seen.set(s.date, nth + 1);
     const key = 's:' + s.id;
+    if (g.paid['ks:' + s.id] === undefined) { const k = nth < CONFIG.dailyLimit ? CONFIG.sessionKeys : 0; g.paid['ks:' + s.id] = k; kp += k; }   // same daily limit as Sweat, minimum days count
     if (g.paid[key] !== undefined) continue;
     if (!streakAt.has(s.date)) streakAt.set(s.date, computeStreak(dates.filter((d) => d <= s.date), s.date).current);
     let amt = (s.minimum ? CONFIG.minimumSweat : CONFIG.sessionSweat) * streakMult(streakAt.get(s.date));
@@ -96,11 +100,14 @@ export function syncRewards(state, now = Date.now()) {
   }
   for (const e of state.events || []) {
     const key = 'e:' + e.id;
+    if (e.type === 'levelUp' && g.paid['ke:' + e.id] === undefined) { g.paid['ke:' + e.id] = CONFIG.levelUpKeys; kp += CONFIG.levelUpKeys; }
     if (g.paid[key] !== undefined || (e.type !== 'levelUp' && e.type !== 'pb')) continue;
     const amt = e.type === 'levelUp' ? CONFIG.levelUpSweat : CONFIG.pbSweat;
     g.paid[key] = amt; g.sweat += amt; out.sweat += amt; out.items++;
     if (e.type === 'levelUp') { g.tokens++; out.tokens++; }
   }
+  if (!g.kw) { kp = Math.min(kp, CONFIG.welcomeKeys); g.kw = true; }
+  const k0 = g.keys; g.keys = Math.min(CONFIG.keyCap, g.keys + kp); out.keys = g.keys - k0;   // keys over the cap are lost, but still marked paid
   const minH = state.settings && state.settings.fastMinHours || 12;
   for (const f of state.fasts || []) {
     const key = 'f:' + f.id;
@@ -213,7 +220,7 @@ export function giveDrop(g, item) {
   if (better) { g.gear[it.slot] = it; if (cur) scrap = stow(g, cur); } else scrap = stow(g, it);
   const rec = { ...own(it), equipped: better, scrap }; delete rec.id;
   g.drops.push(rec); if (g.drops.length > CONFIG.dropLog) g.drops.splice(0, g.drops.length - CONFIG.dropLog);
-  return rec;
+  return { ...rec, id: it.id };   // the log keeps no id, the caller gets it (the loot card equips by it)
 }
 // Every item you own, equipped first. slot is 'all' or one of SLOTS. sort: 'power' (best first), 'rarity' (epic first, then power), 'newest' (highest id first).
 export function inventory(g, slot = 'all', sort = 'power') {
@@ -276,21 +283,34 @@ export const canRespec = (g) => !g.respecUsed && g.soulsSpent > 0;
 export function respec(g) { if (!canRespec(g)) return false; for (const k of TALENTS) g.talents[k] = 0; g.soulsSpent = 0; g.respecUsed = true; return true; }
 
 // ---------- the climb ----------
-// Runs the sim floor by floor for `seconds`. g.prog holds time already spent on the current attempt.
-export function advance(g, seconds, rng = Math.random) {
-  const sum = { floors: 0, bosses: 0, drops: [] };
+// Boss Keys. The hero waits at a boss door with no key (and no key already spent on this boss). fightFloor: the boss floor the live fight can play now (this floor or the next 2) when a key is held or already spent, else 0.
+export const atDoor = (g) => isBoss(g.floor) && g.keyFor !== g.floor && g.keys <= 0;
+export const fightFloor = (g) => { const b = Math.ceil(g.floor / CONFIG.bossEvery) * CONFIG.bossEvery; return b - g.floor <= CONFIG.fightAhead && (g.keys > 0 || g.keyFor === b) ? b : 0; };
+// Runs the sim floor by floor for `seconds`. g.prog holds time already spent on the current attempt. opts.stopAt: stop on reaching that floor, leaving the rest of the time unspent.
+// A boss floor takes a key on the first try. Retries of the same boss are free (g.keyFor). With no key the hero waits: no tries, no grit, time just passes (g.waiting).
+export function advance(g, seconds, rng = Math.random, opts = {}) {
+  const sum = { floors: 0, bosses: 0, drops: [] }, stop = opts.stopAt || Infinity;
   let left = Math.max(0, seconds || 0), guard = CONFIG.maxIter;
   while (left > 1e-9 && guard-- > 0) {
+    if (g.floor >= stop) break;
+    if (isBoss(g.floor) && g.keyFor !== g.floor) { if (g.keys <= 0) { g.prog = 0; break; } g.keys--; g.keyFor = g.floor; }
     const n = g.floor, f = fight(g, n), dur = f.win ? f.t + f.walk : CONFIG.rest;
     const need = Math.max(0, dur - g.prog);
     if (left < need) { g.prog += left; break; }
     left -= need; g.prog = 0;
     if (!f.win) { g.grit = Math.min(CONFIG.gritMax, (1 + g.grit) * (1 + CONFIG.gritStep) - 1); continue; }   // grit compounds, to the cap
-    g.grit = 0; sum.floors++;
+    g.grit = 0; g.keyFor = 0; sum.floors++;
     if (f.enemy.boss) { sum.bosses++; sum.drops.push(giveDrop(g, rollDrop(g, n, rng))); }
     g.floor = n + 1; g.runMax = Math.max(g.runMax, g.floor); g.bestFloor = Math.max(g.bestFloor, g.floor);
   }
+  g.waiting = atDoor(g);
   return sum;
+}
+// The live boss fight: climb to the door with the time away (stopping there), so the fight itself can play on screen. False if the hero cannot get that far yet.
+export function readyBoss(state, floor, now = Date.now(), rng = Math.random) {
+  const g = ensureGame(state), el = g.lastTick ? Math.max(0, Math.min((now - g.lastTick) / 1000, offlineCapSec())) : 0;
+  advance(g, el, rng, { stopAt: floor }); g.lastTick = +now; g.away = null;
+  return g.floor === floor;
 }
 
 export const offlineCapSec = () => Math.min(CONFIG.offlineMaxH, CONFIG.offlineBaseH) * 3600;
@@ -303,10 +323,11 @@ export function offlineCatchUp(state, now = Date.now(), rng = Math.random) {
   const cap = offlineCapSec(g), secs = Math.min(el, cap);
   const sum = advance(g, secs, rng);
   g.lastTick = t;
-  if (secs < 60 || (!sum.floors && !sum.bosses)) return null;
+  const newDoor = g.waiting && g.doorNoted !== g.floor; if (g.waiting) g.doorNoted = g.floor;   // the door note shows once per door; the line under the battle keeps saying it
+  if (secs < 60 || (!sum.floors && !sum.bosses && !newDoor)) return null;
   const rank = { epic: 3, rare: 2, common: 1 };
   const best = sum.drops.slice().sort((a, b) => rank[b.rarity] - rank[a.rarity] || power(b) - power(a))[0] || null;
-  g.away = { seconds: Math.round(secs), capped: el > cap, floors: sum.floors, bosses: sum.bosses, best: best && { slot: best.slot, tier: best.tier, rarity: best.rarity, bonus: best.bonus, power: power(best), equipped: best.equipped }, to: g.floor };
+  g.away = { seconds: Math.round(secs), capped: el > cap, floors: sum.floors, bosses: sum.bosses, best: best && { slot: best.slot, tier: best.tier, rarity: best.rarity, bonus: best.bonus, power: power(best), equipped: best.equipped }, to: g.floor, waiting: g.waiting };
   return g.away;
 }
 
@@ -316,7 +337,7 @@ export const headStart = (g, from = g.runMax) => Math.max(1, Math.min(1 + talFx(
 export function ascend(g) {
   if (!canAscend(g)) return null;
   const gain = soulsFor(g), start = headStart(g);
-  g.souls += gain; g.tokens -= 1; g.floor = start; g.runMax = start; g.grit = 0; g.prog = 0; g.respecUsed = false;
+  g.souls += gain; g.tokens -= 1; g.floor = start; g.runMax = start; g.grit = 0; g.prog = 0; g.keyFor = 0; g.waiting = false; g.respecUsed = false;
   let keep = null;   // the single best item stays equipped, and so do locked ones
   for (const s of SLOTS) if (g.gear[s] && (!keep || power(g.gear[s]) > power(g.gear[keep]))) keep = s;
   for (const s of SLOTS) if (s !== keep && !(g.gear[s] && g.gear[s].lock)) g.gear[s] = null;

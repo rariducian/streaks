@@ -7,8 +7,8 @@ import {
   acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals
 } from './logic.js';
 import { load, save, exportJSON, importJSON } from './store.js';
-import { ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, forge, forgeCost, toggleLock, equip, findItem } from './game/engine.js';
-import { viewTower, mountTower, unmountTower, towerMounted, refreshTowerUi, gearSheet, invSheet, invPatch, mountInv, unmountInv, newInv, equipMsg, heroHit, AFF_NAME } from './game/view.js';
+import { ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, forge, forgeCost, toggleLock, equip, findItem, atDoor, fightFloor, readyBoss } from './game/engine.js';
+import { viewTower, mountTower, unmountTower, towerMounted, refreshTowerUi, gearSheet, invSheet, invPatch, mountInv, unmountInv, newInv, equipMsg, heroHit, closeLoot, keysLabel, AFF_NAME } from './game/view.js';
 
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -150,6 +150,14 @@ function sessionHero(done) {
     <div class="rowbody"><div class="meta">Next in rotation</div><div class="rtitle">${esc(plan.dayName)} &middot; EMOM ${plan.minutes}</div>
     <div class="line">${I.clock}<span>${plan.minutes} min &middot; ${plan.workSec} s work, ${60 - plan.workSec} s rest</span></div>${lines}</div></div>${buttons}</div></div>`;
 }
+// Under Today's session: a hero at a boss door (or about to be, with keys held) points you at the Tower.
+function keyChip() {
+  if (!state.game) return '';
+  const g = ensureGame(state), b = fightFloor(g), nm = keysLabel(g.keys);
+  if (!atDoor(g) && !b) return '';
+  const txt = g.keys > 0 ? `${g.keys} key${g.keys === 1 ? '' : 's'}: fight the floor ${b || g.floor} boss` : 'A boss is waiting: train to fight it';
+  return `<div class="section keysec"><button class="keychip" data-act="toTower" aria-label="${esc(`${g.keys > 0 ? nm + ': fight the floor ' + (b || g.floor) + ' boss' : 'A boss is waiting: train to fight it'}. Opens the Tower`)}"><span aria-hidden="true">&#128273;</span> ${txt}</button></div>`;
+}
 function viewToday() {
   const today = todayStr(), now = new Date();
   const trDates = trainingDates(state), fsDates = fastingDates(state, now);
@@ -161,7 +169,7 @@ function viewToday() {
   const fsPct = fs.doneToday ? 1 : run ? Math.min(1, fHrs / minH) : 0;
   const fsMeta = fs.doneToday ? 'Counted today' : run ? `${fmtH(fHrs)} of ${minH}h` : 'No fast yet today';
   const done = tr.doneToday;
-  let html = `${sessionHero(done)}
+  let html = `${sessionHero(done)}${keyChip()}
   <div class="section"><div class="rings">${streakCard({ label: 'Training', st: tr, dates: trDates, pct: done ? 1 : 0, color: 'var(--green)', meta: done ? 'Done today' : 'Not trained yet', now })}${streakCard({ label: 'Fasting', st: fs, dates: fsDates, pct: fsPct, color: 'var(--purple)', meta: fsMeta, now, attr: 'data-fring' })}</div></div>`;
   if (!run) html += `<div class="section"><h2 class="title"><button class="titlebtn" data-act="tab" data-tab="fast">Fast <span class="chev" aria-hidden="true">&rsaquo;</span></button></h2>
    <button class="fastchip" data-act="tab" data-tab="fast"><div class="poster fast">FAST</div><div><div class="t">Start a fast</div><div class="small muted">Goal ${state.settings.fastGoalHours}h</div></div></button></div>`;
@@ -401,13 +409,15 @@ function renderSheet() {
 }
 
 /* ---------- render ---------- */
+let liveBoss = 0;   // set by the summary's Fight button: the boss floor render() plays live
 function render() {
   renderChrome();
   const v = $('#view');
-  if (tab === 'tower') { syncRewards(state); offlineCatchUp(state); }
+  const live = tab === 'tower' && liveBoss; liveBoss = 0;
+  if (tab === 'tower') { syncRewards(state); if (!live || !readyBoss(state, live)) { offlineCatchUp(state); } }
   v.innerHTML = tab === 'fast' ? viewFast() : tab === 'progress' ? viewProgress() : tab === 'fitness' ? viewFitness() : tab === 'tower' ? viewTower(state) : viewToday();
   renderSheet();
-  if (tab === 'tower' && !sess && !sheet) mountTower(state, save); else unmountTower();
+  if (tab === 'tower' && !sess && !sheet) mountTower(state, save, live && ensureGame(state).floor === live ? { live, tone: liveTone } : {}); else unmountTower();
 }
 
 /* ---------- audio / wake lock ---------- */
@@ -426,6 +436,7 @@ function beep(freq = 660, dur = 0.12, vol = 0.5) {
   } catch (e) { /* ignore */ }
 }
 // start/minute: a slot begins. tick: 3-2-1. rest: work ends. end: session over.
+const liveTone = (ok) => { if (ok) { beep(784, 0.15); setTimeout(() => beep(1047, 0.3), 160); } else beep(247, 0.5, 0.4); };   // boss fight: win, lose
 const BEEP = { start: [988, 0.25], minute: [988, 0.3], tick: [440, 0.08], rest: [523, 0.4], end: [784, 0.6] };
 async function lockScreen() {
   try {
@@ -532,8 +543,9 @@ function renderSession() {
       ${sm.totals && sm.totals.length ? `<div class="sumtot"><div class="small muted">This session</div>${sm.totals.map((t) => `${esc(noun(t.moveId))} <b class="tnum">${fmtAmt(t.total, t.unit)}</b>${t.bothSides ? ' <span class="muted">(both sides)</span>' : ''}`).join(' &middot; ')}</div>` : ''}
       ${sm.events.map((e) => { const [, ic, t] = evLabel(e); return `<div class="evcard">${ic} ${t}</div>`; }).join('')}
       ${sm.sweat > 0 ? `<div class="evcard"><span aria-hidden="true">&#9889;</span> +${sm.sweat} Sweat earned &middot; spend it in Tower</div>` : ''}
+      ${sm.keys > 0 ? `<div class="evcard"><span aria-hidden="true">&#128273;</span> +${sm.keys} boss key${sm.keys === 1 ? '' : 's'} earned</div>` : ''}
       ${sm.minimum ? '<p class="small muted">Minimum days keep your streak. They do not change your targets.</p>' : ''}`;
-    bot = sm.sweat > 0 ? `<div class="two"><button class="btn soft" data-act="closeSess">Done</button><button class="btn" data-act="toTower">Open Tower</button></div>` : `<button class="btn block" data-act="closeSess">Done</button>`;
+    bot = `${sm.fight ? '<button class="btn block" data-act="fightBoss"><span aria-hidden="true">&#9876;</span> Fight the boss</button>' : ''}${sm.sweat > 0 ? `<div class="two"><button class="btn soft" data-act="closeSess">Done</button><button class="btn ${sm.fight ? 'soft' : ''}" data-act="toTower">Open Tower</button></div>` : `<button class="btn block ${sm.fight ? 'soft' : ''}" data-act="closeSess">Done</button>`}`;
   }
   const scroll = o.firstElementChild ? o.firstElementChild.scrollTop : 0;
   o.innerHTML = `<div class="ov">${top}<div class="ov-mid">${mid}</div><div class="ov-bot">${bot}</div></div>`;
@@ -578,13 +590,14 @@ function finishRun(completed) {
   const res = finishSession(state, { startedAt: new Date(s.startMs).toISOString(), endedAt: new Date().toISOString(), minimum, sets, minutes: p.minutes });
   state = res.state; try { save(state); } catch (e) { toast('Could not save.'); }
   const streak = computeStreak(trainingDates(state), todayStr()).current;
-  let sweat = 0;   // what this session (and its level-up and PB events) paid into the Tower
+  let sweat = 0, keys = 0, fight = 0;   // what this session (and its level-up and PB events) paid into the Tower, and the boss floor the Fight button plays (0: no button)
   try {
-    syncRewards(state); const g = ensureGame(state), last = state.sessions[state.sessions.length - 1];
+    const r = syncRewards(state), g = ensureGame(state), last = state.sessions[state.sessions.length - 1];
     sweat = (g.paid['s:' + (last && last.id)] || 0) + (res.events || []).reduce((n, e) => n + (g.paid['e:' + e.id] || 0), 0);
+    keys = r.keys; fight = fightFloor(g);
     save(state);
-  } catch (e) { sweat = 0; }
-  s.summary = { sweat, minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })), totals: sessionTotals(sets) };
+  } catch (e) { sweat = 0; keys = 0; fight = 0; }
+  s.summary = { sweat, keys, fight, minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })), totals: sessionTotals(sets) };
   s.phase = 'summary'; renderSession();
 }
 async function endEarly() {
@@ -646,6 +659,9 @@ const act = {
   startMin: () => openSession(true),
   closeSess: () => closeSession(),
   toTower: () => { tab = 'tower'; sheet = null; closeSession(); window.scrollTo(0, 0); },
+  fightBoss: () => { unlockAudio(); const g = ensureGame(state), b = fightFloor(g); liveBoss = b; tab = 'tower'; sheet = null; closeSession(); window.scrollTo(0, 0); },
+  lootEquip: (el) => { const g = ensureGame(state), it = findItem(g, Number(el.dataset.id)); if (!it) return; const m = equipMsg(g, it); if (equip(g, it.id)) { save(state); refreshTowerUi(state); closeLoot(); toast(m); } },
+  lootKeep: () => closeLoot(),
   growYes: () => commit(acceptGrowth(state)),
   growNo: () => commit(dismissGrowth(state, new Date())),
   gotBar: () => commit(setPullupBar(state, true)),
