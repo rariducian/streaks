@@ -18,12 +18,16 @@ export const PAL = {
   blueD: '#2a4688', blueM: '#5a8ad8', blueL: '#a6dcf2',
   fireM: '#f08a2c', boneM: '#e2d6ba'
 };
+// Gear set accents (the 3 piece trim on the hero): one flat palette colour per set, keyed by move id. Roles '1' to '8' carry them in a map.
+export const SET_COLOR = { hpush: 'redM', squat: 'blueM', hinge: 'goldM', row: 'greenM', core: 'boneM', vpush: 'blueL', calf: 'fireM', hamcurl: 'purM' };
+const SET_ROLE = Object.fromEntries(Object.keys(SET_COLOR).map((id, i) => [id, String(i + 1)]));
 // Letters are roles in a pixel map; each points at a palette colour. Uppercase/lowercase pairs are base and shade.
 const ROLE = {
   k: 'ink', s: 'skinM', S: 'skinD', T: 'skinL', h: 'hairM', H: 'umber', J: 'hairL', r: 'redM', R: 'redD', q: 'redL', o: 'goldM', O: 'woodM', P: 'goldL',
   e: 'coolL', E: 'coolM', W: 'steelL', n: 'woodM', N: 'umber', m: 'woodL', g: 'greenM', G: 'greenD', y: 'greenL', p: 'purM', u: 'purD', v: 'purL',
   b: 'boneM', B: 'warmL', c: 'white', K: 'warmM', a: 'coolM', A: 'coolD', f: 'coolL', z: 'ink', d: 'redL', x: 'goldM', X: 'fireM', w: 'white',
-  l: 'blueM', L: 'blueD', i: 'white', I: 'blueL', j: 'blueM', Y: 'goldL', Z: 'white', U: 'blueL', C: 'greenL', V: 'greenD'
+  l: 'blueM', L: 'blueD', i: 'white', I: 'blueL', j: 'blueM', Y: 'goldL', Z: 'white', U: 'blueL', C: 'greenL', V: 'greenD',
+  ...Object.fromEntries(Object.entries(SET_COLOR).map(([id, n]) => [SET_ROLE[id], n]))
 };
 export const PALETTE = Object.fromEntries(Object.entries(ROLE).map(([k, n]) => [k, PAL[n]]));
 // base role -> [shade on the lower/right rim, light on the upper/left rim]
@@ -474,6 +478,7 @@ const WEAPON = {
     if (c === 'rare') { w.P(5, 1, 'U'); w.P(8, 1, 'U'); w.P(11, 1, 'U'); w.P(-4, 0, 'l'); w.P(-4, 1, 'l'); } if (c === 'epic') { w.P(2, 0, 'v'); w.P(6, 1, 'v'); w.P(10, 1, 'v'); w.P(-4, 0, 'x'); w.P(-4, 1, 'x'); w.P(2, 1, 'Y'); w.P(7, 2, 'v'); }
   }
 };
+const TRIM_GUARD = { sword: 3, longsword: 4, greatsword: 5, axe: 1, spear: 1 };   // half width of the set coloured guard bar
 const DROPPED = { sword: 5, longsword: 7, axe: 7, spear: 9, greatsword: 9 };   // the weapon on the ground when the hero is down
 // armour pieces. s is the style, c the rarity colours.
 function torso(b, fill) { rect(b, 4, 14, 11, 8, fill); rect(b, 2, 15, 3, 3, fill); }   // the base tunic's footprint, and the back sleeve
@@ -533,18 +538,20 @@ export const parseLook = (look) => { const [slot, style, rarity] = String(look |
 export const HERO_LOOK_STYLES = { weapon: Object.keys(WEAPON).filter((k) => k !== 'bare'), armour: Object.keys(ARMOUR), boots: Object.keys(BOOTS) };
 const HERO_SLOTS = ['weapon', 'armour', 'boots'];
 const heroLooks = (looks) => Object.fromEntries(HERO_SLOTS.map((s, i) => [s, parseLook((Array.isArray(looks) ? looks[i] : looks && looks[s]) || '')]).filter(([s, v]) => v && v.slot === s));
-export const heroSig = (looks) => HERO_SLOTS.map((s, i) => (Array.isArray(looks) ? looks[i] : looks && looks[s]) || '-').join('|');
+const trimOf = (looks) => { const id = Array.isArray(looks) ? looks[3] : looks && looks.set; return SET_ROLE[id] ? id : ''; };   // the set (move id) whose 3 piece trim the hero wears, or ''
+export const heroSig = (looks) => HERO_SLOTS.map((s, i) => (Array.isArray(looks) ? looks[i] : looks && looks[s]) || '-').join('|') + (trimOf(looks) ? '|' + trimOf(looks) : '');
 // One overlay in one frame, as raw grids {k, b, l}. icon: no arms, no hand (for the inventory icon).
-function overlayGrids(slot, style, rarity, frame, icon = false) {
+function overlayGrids(slot, style, rarity, frame, icon = false, trim = '') {
   const d = HERO, k = grid(d.w, d.h), b = grid(d.w, d.h), l = grid(d.w, d.h, 0, true), c0 = clips;
   if (frame === 'down') {
-    if (slot === 'weapon') { if (style === 'bare') { rect(b, 1, 25, 1, 1, 'e'); line(b, 1, 25, 5, 25, 'e'); } else { const n = DROPPED[style]; px(b, 0, 25, 'n'); line(b, 1, 25, n, 25, 'e'); px(b, 2, 24, RAR[rarity].g); px(b, 2, 26, RAR[rarity].g); px(b, n, 25, 'W'); if (style === 'axe') { rect(b, n - 2, 23, 2, 1, 'e'); rect(b, n - 2, 27, 2, 1, 'e'); } if (rarity !== 'common') px(b, n - 3, 25, rarity === 'epic' ? 'v' : 'U'); } }
-    else if (slot === 'armour') ARMOUR_DOWN[style](b, k, rarity); else BOOTS_DOWN[style](b, rarity);
+    if (slot === 'weapon') { if (style === 'bare') { rect(b, 1, 25, 1, 1, 'e'); line(b, 1, 25, 5, 25, 'e'); } else { const n = DROPPED[style]; px(b, 0, 25, 'n'); line(b, 1, 25, n, 25, 'e'); px(b, 2, 24, RAR[rarity].g); px(b, 2, 26, RAR[rarity].g); px(b, n, 25, 'W'); if (style === 'axe') { rect(b, n - 2, 23, 2, 1, 'e'); rect(b, n - 2, 27, 2, 1, 'e'); } if (rarity !== 'common') px(b, n - 3, 25, rarity === 'epic' ? 'v' : 'U'); if (trim) { px(b, 0, 25, trim); px(b, 2, 24, trim); px(b, 2, 26, trim); } } }
+    else if (slot === 'armour') { ARMOUR_DOWN[style](b, k, rarity); if (trim) { rect(b, 12, 19, 10, 1, trim); rect(b, 12, 26, 10, 1, trim); } } else { BOOTS_DOWN[style](b, rarity); if (trim) { rect(b, 24, 22, 1, 5, trim); px(b, 29, 21, trim); } }
     return { k, b, l };
   }
   const P = { ...poseOf(d, frame), ic: icon };
-  if (slot === 'weapon') { const [gx, gy, A] = GRIPS[P.I]; WEAPON[style](wpn(l, gx, gy, A), rarity); if (!icon) hand(l, gx, gy); }
-  else if (slot === 'armour') ARMOUR[style](b, l, k, P, rarity); else BOOTS[style](b, rarity);
+  if (slot === 'weapon') { const [gx, gy, A] = GRIPS[P.I], w = wpn(l, gx, gy, A); WEAPON[style](w, rarity); if (trim) { w.P(-3, 0, trim); w.P(-2, 0, trim); w.Gd(2, TRIM_GUARD[style] || 1, trim); } if (!icon) hand(l, gx, gy); }
+  else if (slot === 'armour') { ARMOUR[style](b, l, k, P, rarity); if (trim) { rect(b, 9, 15, 1, 6, trim); rect(b, 4, 21, 11, 1, trim); rect(b, 2, 15, 3, 1, trim); } }
+  else { BOOTS[style](b, rarity); if (trim) for (const x of [5, 10]) { rect(b, x + 1, 22, 3, 1, trim); px(b, x + 4, 25, trim); } }
   if (clips > c0) CLIPS[`${slot}.${style}.${rarity}:${frame}`] = clips - c0;
   return { k: move(d, k, frame, false), b: move(d, b, frame, false), l: move(d, l, frame, true) };
 }
@@ -559,7 +566,8 @@ const doll = new Map();
 export function heroMap(frame, looks) {
   const key = heroSig(looks) + ':' + frame; if (doll.has(key)) return doll.get(key);
   const L = heroLooks(looks), d = HERO, P = poseOf(d, frame), parts = [];
-  const og = (s, st) => L[st] ? overlayGrids(L[st].slot, L[st].style, L[st].rarity, frame) : s === 'weapon' ? overlayGrids('weapon', 'bare', 'common', frame) : null;
+  const tr = L.weapon && L.armour && L.boots ? SET_ROLE[trimOf(looks)] || '' : '';   // the 3 piece trim needs all three pieces on
+  const og = (s, st) => L[st] ? overlayGrids(L[st].slot, L[st].style, L[st].rarity, frame, false, tr) : s === 'weapon' ? overlayGrids('weapon', 'bare', 'common', frame) : null;
   const wp = og('weapon', 'weapon'), ar = og('armour', 'armour'), bt = og('boots', 'boots');
   const b = grid(d.w, d.h), l = grid(d.w, d.h, 0, true);
   if (frame === 'down') d.down(b); else d.draw(b, l, P);

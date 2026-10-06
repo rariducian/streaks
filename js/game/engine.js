@@ -1,12 +1,12 @@
 // Tower engine: pure logic, no DOM. Mutates the game object it is given (state.game). Spec: docs/TOWER.md
-import { computeStreak, trainingDates } from '../logic.js';
+import { computeStreak, trainingDates, restFn, restBetween } from '../logic.js';
 import { traitsOf, isElite } from './scene.js';
 
 export const CONFIG = {
   sessionSweat: 100, minimumSweat: 40, streakStep: 0.05, streakCap: 10, dailyLimit: 2, secondHalf: 0.5,
   levelUpSweat: 300, pbSweat: 100,
   focusBase: 30, focusPerHour: 5, focusCap: 80,
-  atk: { base: 5, per: 2, cost: 20, grow: 1.04 }, hp: { base: 50, per: 15, cost: 20, grow: 1.04 },
+  atk: { base: 5, per: 2, cost: 20, grow: 1.038 }, hp: { base: 50, per: 15, cost: 20, grow: 1.038 },
   spd: { base: 1, per: 0.04, max: 3, cost: 25, grow: 1.05 },
   milestoneEvery: 10, milestoneMult: 1.5,   // every 10 levels of Attack or Health multiplies that stat (idle-game milestone), so late floors keep falling
   critMult: 2,   // a crit does double damage, Crit damage affixes add to this
@@ -34,8 +34,24 @@ export const CONFIG = {
     fortune: { max: 5, cost: 3, grow: 1.4, per: 0.02 }, ancestral: { max: 5, cost: 3, grow: 1.4, per: 0.05 }
   },
   keyCap: 5, sessionKeys: 1, levelUpKeys: 1, welcomeKeys: 3, migrateKeys: 1, fightAhead: 2,   // Boss Keys: a paid session and a level-up pay keys, history pays at most welcomeKeys, old saves start with migrateKeys. fightAhead: floors before a boss that still offer the live fight
-  ascendMinFloor: 20
+  ascendMinFloor: 20,
+  restedBonus: 0.10,   // 'Rested': the next session after a passed planned rest day pays +10% Sweat (added to Stamina and the like). One-off, never stacks
+  welcomeSets: 3,   // history pays at most this many set pieces on the first sync, like welcomeKeys
+  bounty: { daysMin: 3, daysMax: 5, fullMin: 2, fullMax: 4, fastMin: 2, fastMax: 4, weeks: 4, keys: 1, minRarity: 'rare' },   // Weekly bounty: targets scale to the last `weeks` weeks (average + 1). The chest gives a rare-or-better item at the current tier and `keys` boss key
+  // Move-tied gear sets. A level-up of that move in real life gives one missing piece (weapon, armour or boots). 2 worn pieces give `two`, 3 give `three` on top.
+  // Effect keys: atk, hp, spd (stat multipliers), crit (crit chance), timer (boss timer share), or any affix id (lifesteal, thorns, critdmg, boss, swift, guard, ward, train)
+  sets: {
+    hpush: { name: 'Vanguard', two: { atk: 0.10 }, three: { atk: 0.15, crit: 0.05 } },
+    squat: { name: 'Bulwark', two: { hp: 0.10 }, three: { hp: 0.15, guard: 0.05 } },
+    hinge: { name: 'Atlas', two: { atk: 0.05, hp: 0.05 }, three: { atk: 0.08, hp: 0.08, thorns: 0.08 } },
+    row: { name: 'Tidecaller', two: { lifesteal: 0.05 }, three: { lifesteal: 0.05, spd: 0.05 } },
+    core: { name: 'Keystone', two: { timer: 0.15 }, three: { timer: 0.15, boss: 0.10 } },
+    vpush: { name: 'Skyward', two: { spd: 0.08 }, three: { spd: 0.08, ward: 0.12 } },
+    calf: { name: 'Strider', two: { train: 0.05 }, three: { train: 0.05, spd: 0.08 } },
+    hamcurl: { name: 'Coil', two: { crit: 0.04 }, three: { crit: 0.04, critdmg: 0.4 } }
+  }
 };
+export const SET_IDS = Object.keys(CONFIG.sets);
 export const SLOTS = ['weapon', 'armour', 'boots'];
 export const SLOT_STAT = { weapon: 'atk', armour: 'hp', boots: 'spd' };
 export const RARITIES = ['common', 'rare', 'epic'];
@@ -66,6 +82,7 @@ export function ensureGame(state) {
   g.stash = g.stash.filter((it) => it && SLOTS.includes(it.slot)); for (const it of g.stash) tidy(g, it);
   if (!Array.isArray(g.drops)) g.drops = [];
   if (g.away === undefined) g.away = null;
+  const b = g.bounty; if (b !== undefined && !(b && typeof b === 'object' && typeof b.week === 'string' && ['days', 'best', 'level', 'full', 'fast'].includes(b.kind) && Number.isFinite(b.target))) delete g.bounty; else if (b) b.claimed = !!b.claimed;
   return g;
 }
 function num2(o, k) { if (!Number.isFinite(o[k])) o[k] = 0; }
@@ -75,6 +92,7 @@ function tidy(g, it) {
   it.aff = Array.isArray(it.aff) ? it.aff.filter((a) => a && CONFIG.affix[a.id] && Number.isFinite(a.v)) : [];
   if (!Number.isFinite(it.lvl)) it.lvl = 0;
   it.lock = !!it.lock; it.added = !!it.added;
+  if (it.set !== undefined && !CONFIG.sets[it.set]) delete it.set;
   if (!Number.isFinite(it.id)) it.id = ++g.seq;
 }
 
@@ -84,19 +102,21 @@ export const focusForFast = (hours, minH) => hours >= minH ? Math.min(CONFIG.foc
 
 // Pays every session, event and fast not yet in game.paid. Safe to call any number of times.
 // Boss Keys ride the same way ('ks:' per session, 'ke:' per level-up), so old saves with Sweat already paid still get theirs. The first sync is the welcome grant: history pays at most welcomeKeys.
-export function syncRewards(state, now = Date.now()) {
-  const g = ensureGame(state), out = { sweat: 0, focus: 0, tokens: 0, items: 0, keys: 0 }, stam = 1 + CONFIG.staminaPer * (g.focusUp.endurance || 0) + trainBonus(g) + talFx(g, 'prospector');
+export function syncRewards(state, now = Date.now(), rng = Math.random) {
+  const g = ensureGame(state), out = { sweat: 0, focus: 0, tokens: 0, items: 0, keys: 0, pieces: [] }, rest = restFn(state.settings), stam = 1 + CONFIG.staminaPer * (g.focusUp.endurance || 0) + trainBonus(g) + talFx(g, 'prospector');
   const sessions = (state.sessions || []).map((s, i) => ({ s, i })).sort((a, b) => (a.s.date || '').localeCompare(b.s.date || '') || String(a.s.startedAt || '').localeCompare(String(b.s.startedAt || '')) || a.i - b.i);
-  const dates = trainingDates(state), streakAt = new Map(), seen = new Map(); let kp = 0;
+  const dates = trainingDates(state), streakAt = new Map(), seen = new Map(); let kp = 0, prevDate = null;
   for (const { s } of sessions) {
+    const before = prevDate; prevDate = s.date;   // 'Rested': a planned rest day passed since the last session (never true for a 2nd session on the same day)
     const nth = seen.get(s.date) || 0; seen.set(s.date, nth + 1);
     const key = 's:' + s.id;
     if (g.paid['ks:' + s.id] === undefined) { const k = nth < CONFIG.dailyLimit ? CONFIG.sessionKeys : 0; g.paid['ks:' + s.id] = k; kp += k; }   // same daily limit as Sweat, minimum days count
     if (g.paid[key] !== undefined) continue;
-    if (!streakAt.has(s.date)) streakAt.set(s.date, computeStreak(dates.filter((d) => d <= s.date), s.date).current);
+    if (!streakAt.has(s.date)) streakAt.set(s.date, computeStreak(dates.filter((d) => d <= s.date), s.date, rest).current);
     let amt = (s.minimum ? CONFIG.minimumSweat : CONFIG.sessionSweat) * streakMult(streakAt.get(s.date));
     amt = nth === 0 ? amt : nth < CONFIG.dailyLimit ? amt * CONFIG.secondHalf : 0;
-    amt = Math.round(amt * stam); g.paid[key] = amt; g.sweat += amt; out.sweat += amt; out.items++;
+    const rested = !!before && before < s.date && restBetween(rest, before, s.date);
+    amt = Math.round(amt * (stam + (rested ? CONFIG.restedBonus : 0))); g.paid[key] = amt; g.sweat += amt; out.sweat += amt; out.items++;
   }
   for (const e of state.events || []) {
     const key = 'e:' + e.id;
@@ -105,6 +125,13 @@ export function syncRewards(state, now = Date.now()) {
     const amt = e.type === 'levelUp' ? CONFIG.levelUpSweat : CONFIG.pbSweat;
     g.paid[key] = amt; g.sweat += amt; out.sweat += amt; out.items++;
     if (e.type === 'levelUp') { g.tokens++; out.tokens++; }
+  }
+  // Set pieces: only a real level-up of that move pays, once per event ('es:'). The first sync (history) pays at most welcomeSets, newest first.
+  const lv = (state.events || []).filter((e) => e.type === 'levelUp' && g.paid['es:' + e.id] === undefined); if (!g.kw) lv.reverse();
+  let sp = 0;
+  for (const e of lv) {
+    if (!CONFIG.sets[e.moveId] || (!g.kw && sp >= CONFIG.welcomeSets)) { g.paid['es:' + e.id] = 0; continue; }
+    g.paid['es:' + e.id] = 1; sp++; out.pieces.push(giveSetPiece(g, e.moveId, rng));
   }
   if (!g.kw) { kp = Math.min(kp, CONFIG.welcomeKeys); g.kw = true; }
   const k0 = g.keys; g.keys = Math.min(CONFIG.keyCap, g.keys + kp); out.keys = g.keys - k0;   // keys over the cap are lost, but still marked paid
@@ -131,7 +158,7 @@ const talFx = (g, k) => tal(g, k) * CONFIG.talents[k].per;
 // ---------- affixes ----------
 // Sum of one affix over the three equipped items, capped where the config says so.
 export function affixTotal(g, id) {
-  let t = 0; for (const s of SLOTS) { const it = g.gear && g.gear[s]; if (it) for (const a of it.aff || []) if (a.id === id) t += a.v; }
+  let t = setFx(g)[id] || 0; for (const s of SLOTS) { const it = g.gear && g.gear[s]; if (it) for (const a of it.aff || []) if (a.id === id) t += a.v; }
   const c = CONFIG.affix[id].cap; return c ? Math.min(c, t) : t;
 }
 export const trainBonus = (g) => affixTotal(g, 'train');
@@ -144,13 +171,30 @@ export function rollAffix(tier, have, rng = Math.random) {
 export const power = (it) => !it ? 0 : Math.round(((it.bonus || 0) * 100 + (it.aff || []).reduce((p, a) => p + a.v * 100 * CONFIG.affix[a.id].w, 0)) * 10) / 10;
 export const baseBonus = (it) => CONFIG.gearPct * it.tier * CONFIG.rarity[it.rarity].mult * (1 + CONFIG.forge.temperPct * (it.lvl || 0));
 
+// ---------- gear sets ----------
+// Worn pieces per set (swap: an item tried on over its slot). A set piece has `set` = the move id.
+export function setCounts(g, swap = null) {
+  const c = {}; for (const s of SLOTS) { const it = swap && swap.slot === s ? swap : g.gear && g.gear[s]; if (it && it.set && CONFIG.sets[it.set]) c[it.set] = (c[it.set] || 0) + 1; }
+  return c;
+}
+const NOFX = Object.freeze({});
+// All worn set bonuses added up: { atk, hp, spd, crit, timer, <affix id> }. 2 pieces give `two`, 3 give `two` and `three`.
+export function setFx(g, swap = null) {
+  const c = setCounts(g, swap), ids = Object.keys(c); if (!ids.length) return NOFX;
+  const t = {}, add = (o) => { for (const k in o) t[k] = (t[k] || 0) + o[k]; };
+  for (const id of ids) { const d = CONFIG.sets[id]; if (c[id] >= 2) add(d.two); if (c[id] >= 3) add(d.three); }
+  return t;
+}
+// For the Gear section and the compare panel: every set with a worn piece, its count and which bonuses are on.
+export const activeSets = (g, swap = null) => { const c = setCounts(g, swap); return Object.keys(c).map((id) => ({ id, name: CONFIG.sets[id].name, n: c[id], two: c[id] >= 2, three: c[id] >= 3 })); };
+
 export function heroStats(g) {
-  const L = g.stats, ms = (lv) => Math.pow(CONFIG.milestoneMult, Math.floor(lv / CONFIG.milestoneEvery));
+  const L = g.stats, ms = (lv) => Math.pow(CONFIG.milestoneMult, Math.floor(lv / CONFIG.milestoneEvery)), F = setFx(g);
   return {
-    atk: (CONFIG.atk.base + CONFIG.atk.per * L.atk) * ms(L.atk) * gearMult(g, 'weapon') * (1 + talFx(g, 'might')),
-    hp: (CONFIG.hp.base + CONFIG.hp.per * L.hp) * ms(L.hp) * gearMult(g, 'armour') * (1 + talFx(g, 'vigour')),
-    spd: Math.min(CONFIG.spd.max, CONFIG.spd.base + CONFIG.spd.per * L.spd) * gearMult(g, 'boots'),
-    crit: CONFIG.precisionPer * (g.focusUp.precision || 0), critMult: CONFIG.critMult + affixTotal(g, 'critdmg')
+    atk: (CONFIG.atk.base + CONFIG.atk.per * L.atk) * ms(L.atk) * gearMult(g, 'weapon') * (1 + talFx(g, 'might')) * (1 + (F.atk || 0)),
+    hp: (CONFIG.hp.base + CONFIG.hp.per * L.hp) * ms(L.hp) * gearMult(g, 'armour') * (1 + talFx(g, 'vigour')) * (1 + (F.hp || 0)),
+    spd: Math.min(CONFIG.spd.max, CONFIG.spd.base + CONFIG.spd.per * L.spd) * gearMult(g, 'boots') * (1 + (F.spd || 0)),
+    crit: CONFIG.precisionPer * (g.focusUp.precision || 0) + (F.crit || 0), critMult: CONFIG.critMult + affixTotal(g, 'critdmg')
   };
 }
 export const isBoss = (n) => n % CONFIG.bossEvery === 0;
@@ -158,7 +202,7 @@ export function enemy(n) {
   const b = isBoss(n), el = isElite(n);
   return { floor: n, boss: b, elite: el, hp: CONFIG.enemyHp * Math.pow(CONFIG.enemyHpGrow, n - 1) * (b ? CONFIG.bossHp : 1) * (el ? CONFIG.eliteHp : 1), atk: CONFIG.enemyAtk * Math.pow(CONFIG.enemyAtkGrow, n - 1) * (b ? CONFIG.bossAtk : 1) * (el ? CONFIG.eliteAtk : 1) };
 }
-export const bossTimer = (g) => CONFIG.bossTimer + talFx(g, 'wind');
+export const bossTimer = (g) => (CONFIG.bossTimer + talFx(g, 'wind')) * (1 + (setFx(g).timer || 0));
 // Closed form fight. Grit is temporary attack from failed tries on the current floor (capped). A boss also needs killing inside the boss timer.
 // Affixes and zone traits fold into two numbers: dps (damage to the enemy per second, net of armour and regen) and net (damage to the hero per second, net of Lifesteal).
 export function fight(g, n) {
@@ -191,23 +235,25 @@ export function buyFocus(g, up) {
 }
 
 // ---------- gear ----------
-export function rollDrop(g, floor, rng = Math.random) {
-  const slot = SLOTS[Math.min(2, Math.floor(rng() * 3))];
+// opts.slot: fixed slot (no dice for it). opts.min: lowest rarity ('rare' for chests and set pieces).
+export function rollDrop(g, floor, rng = Math.random, opts = {}) {
+  const slot = opts.slot || SLOTS[Math.min(2, Math.floor(rng() * 3))];
   const tier = Math.ceil(floor / CONFIG.bossEvery);
   const shift = CONFIG.luckPer * (g.focusUp.luck || 0) + talFx(g, 'fortune'), r = rng();
   const epicP = CONFIG.rarity.epic.p + shift, rareP = CONFIG.rarity.rare.p;
-  const rarity = r < epicP ? 'epic' : r < epicP + rareP ? 'rare' : 'common';
+  let rarity = r < epicP ? 'epic' : r < epicP + rareP ? 'rare' : 'common';
+  if (opts.min && RARITIES.indexOf(rarity) < RARITIES.indexOf(opts.min)) rarity = opts.min;
   const aff = []; for (let i = 0; i < CONFIG.maxAffix[rarity]; i++) aff.push(rollAffix(tier, aff, rng));
   return { slot, tier, rarity, bonus: CONFIG.gearPct * tier * CONFIG.rarity[rarity].mult, floor, lvl: 0, aff, lock: false, added: false, look: lookOf({ slot, tier, rarity }) };
 }
 export const stashMax = (g) => CONFIG.stash + talFx(g, 'hoarder');
 const scrapOf = (it) => CONFIG.scrapPer * it.tier;
-const own = (it) => ({ slot: it.slot, tier: it.tier, rarity: it.rarity, bonus: it.bonus, floor: it.floor, id: it.id, look: it.look || lookOf(it), lvl: it.lvl || 0, aff: (it.aff || []).map((a) => ({ ...a })), lock: !!it.lock, added: !!it.added });
+const own = (it) => ({ ...(it.set ? { set: it.set } : {}), slot: it.slot, tier: it.tier, rarity: it.rarity, bonus: it.bonus, floor: it.floor, id: it.id, look: it.look || lookOf(it), lvl: it.lvl || 0, aff: (it.aff || []).map((a) => ({ ...a })), lock: !!it.lock, added: !!it.added });
 // Puts an item in the stash. Over the limit, the oldest unlocked item is scrapped for Sweat (the new one itself if everything is locked). Returns Sweat scrapped.
 function stow(g, it) {
   g.stash.push(it); let scrap = 0;
   while (g.stash.length > stashMax(g)) {
-    const i = g.stash.findIndex((x) => !x.lock); if (i < 0) break;
+    let i = g.stash.findIndex((x) => !x.lock && !x.set); if (i < 0) i = g.stash.findIndex((x) => !x.lock); if (i < 0) break;   // set pieces go last
     scrap += scrapOf(g.stash[i]); g.stash.splice(i, 1);
   }
   g.sweat += scrap; return scrap;
@@ -222,6 +268,22 @@ export function giveDrop(g, item) {
   g.drops.push(rec); if (g.drops.length > CONFIG.dropLog) g.drops.splice(0, g.drops.length - CONFIG.dropLog);
   return { ...rec, id: it.id };   // the log keeps no id, the caller gets it (the loot card equips by it)
 }
+// A set piece for a level-up of `moveId`: one random missing piece at the current tier (rare or better). With all 3 owned the duplicate upgrades the weakest piece:
+// its tier up to the current one (affixes scale with it), else +1 temper level. Returns { kind: 'piece' | 'upgrade', ...item record }.
+export const tierNow = (g) => Math.max(1, Math.ceil(g.floor / CONFIG.bossEvery));
+export const setPieces = (g, id) => [...SLOTS.map((s) => g.gear[s]), ...g.stash].filter((it) => it && it.set === id);
+export function giveSetPiece(g, id, rng = Math.random) {
+  if (!CONFIG.sets[id]) return null;
+  const have = setPieces(g, id), missing = SLOTS.filter((s) => !have.some((it) => it.slot === s));
+  if (missing.length) {
+    const it = rollDrop(g, g.floor, rng, { slot: missing[Math.min(missing.length - 1, Math.floor(rng() * missing.length))], min: 'rare' }); it.set = id;
+    return { kind: 'piece', ...giveDrop(g, it) };
+  }
+  const it = have.slice().sort((a, b) => a.tier - b.tier || (a.lvl || 0) - (b.lvl || 0) || a.id - b.id)[0], t = tierNow(g), grow = (n) => 1 + CONFIG.tierGrow * (n - 1);
+  if (it.tier < t) { for (const a of it.aff) a.v = Math.round(a.v * grow(t) / grow(it.tier) * 1000) / 1000; it.tier = t; } else it.lvl = (it.lvl || 0) + 1;
+  it.bonus = baseBonus(it); it.look = lookOf(it);
+  return { kind: 'upgrade', ...own(it), id: it.id, equipped: g.gear[it.slot] === it, scrap: 0 };
+}
 // Every item you own, equipped first. slot is 'all' or one of SLOTS. sort: 'power' (best first), 'rarity' (epic first, then power), 'newest' (highest id first).
 export function inventory(g, slot = 'all', sort = 'power') {
   const rk = { epic: 3, rare: 2, common: 1 }, all = SLOTS.map((s) => g.gear[s]).filter(Boolean).map((it) => ({ it, equipped: true })).concat(g.stash.map((it) => ({ it, equipped: false })));
@@ -232,7 +294,8 @@ export function inventory(g, slot = 'all', sort = 'power') {
 export function compareItem(g, it) {
   const cur = g.gear[it.slot], stat = SLOT_STAT[it.slot], before = heroStats(g)[stat], after = heroStats({ ...g, gear: { ...g.gear, [it.slot]: it } })[stat];
   const r = (v) => Math.round(v * 10) / 10;
-  return { cur, same: !!cur && cur.id === it.id, stat, power: power(it), dPower: r(power(it) - power(cur)), before, after, dStat: after - before };
+  const same = !!cur && cur.id === it.id, c0 = setCounts(g), c1 = setCounts(g, it), sets = same ? [] : [...new Set([it.set, cur && cur.set].filter(Boolean))].map((id) => ({ id, name: CONFIG.sets[id].name, from: c0[id] || 0, to: c1[id] || 0 })).filter((x) => x.from !== x.to);   // sets: the count change this swap makes
+  return { cur, same, stat, power: power(it), dPower: r(power(it) - power(cur)), before, after, dStat: after - before, sets };
 }
 export const findItem = (g, id) => SLOTS.map((s) => g.gear[s]).concat(g.stash).find((it) => it && it.id === id) || null;
 export function toggleLock(g, id) { const it = findItem(g, id); if (!it) return false; it.lock = !it.lock; return true; }
@@ -340,8 +403,8 @@ export function ascend(g) {
   g.souls += gain; g.tokens -= 1; g.floor = start; g.runMax = start; g.grit = 0; g.prog = 0; g.keyFor = 0; g.waiting = false; g.respecUsed = false;
   let keep = null;   // the single best item stays equipped, and so do locked ones
   for (const s of SLOTS) if (g.gear[s] && (!keep || power(g.gear[s]) > power(g.gear[keep]))) keep = s;
-  for (const s of SLOTS) if (s !== keep && !(g.gear[s] && g.gear[s].lock)) g.gear[s] = null;
-  for (const it of g.stash) if (!it.lock) g.sweat += scrapOf(it);   // unlocked stash items are scrapped; locked ones stay
-  g.stash = g.stash.filter((it) => it.lock);
+  for (const s of SLOTS) if (s !== keep && !(g.gear[s] && (g.gear[s].lock || g.gear[s].set))) g.gear[s] = null;   // set pieces stay too: they came from real level-ups
+  for (const it of g.stash) if (!it.lock && !it.set) g.sweat += scrapOf(it);   // unlocked stash items are scrapped; locked ones and set pieces stay
+  g.stash = g.stash.filter((it) => it.lock || it.set);
   return gain;
 }

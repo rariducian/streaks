@@ -1,6 +1,8 @@
 // Tower tab: HTML view plus the battle canvas. Isometric stone floor, chibi units, drawn at art resolution then scaled up crisp.
-import { CONFIG, SLOTS, SLOT_STAT, TALENTS, ensureGame, heroStats, fight, advance, offlineCatchUp, statCost, focusCost, focusMax, canAscend, soulsFor, isBoss, atDoor, power, forgeCost, forgeBlock, stashMax, soulsLeft, talentCost, canRespec, lookOf, inventory, compareItem, findItem } from './engine.js';
-import { getSprite, getHero, iconInfo, PAL, hexA } from './sprites.js';
+import { CONFIG, SLOTS, SLOT_STAT, TALENTS, SET_IDS, ensureGame, heroStats, fight, advance, offlineCatchUp, statCost, focusCost, focusMax, canAscend, soulsFor, isBoss, atDoor, power, forgeCost, forgeBlock, stashMax, soulsLeft, talentCost, canRespec, lookOf, inventory, compareItem, findItem, setCounts, activeSets, tierNow } from './engine.js';
+import { getSprite, getHero, iconInfo, PAL, hexA, SET_COLOR } from './sprites.js';
+import { ensureBounty, bountyStatus, bountyText } from './bounty.js';
+import { todayStr, restedPending } from '../logic.js';
 import { AW, PAD, AH, HERO, FOE, mk, sceneFor, zoneOf, enemyKind, enemyName, isElite, traitLine, glow, hash } from './scene.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -29,13 +31,24 @@ const AFF_DESC = { lifesteal: 'Heal {v} of damage dealt', thorns: 'Reflect {v} o
 const affDesc = (a) => AFF_DESC[a.id].replace('{v}', pct(a.v));
 const chips = (it) => (it.aff || []).map((a) => `<span class="tw-chip">${AFF_NAME[a.id]} ${pct(a.v)}</span>`).join('');
 const pw = (it) => Math.round(power(it) * 10) / 10;
+// ---- gear sets: name, colour dot, bonus text ----
+const setName = (it) => (it && it.set && CONFIG.sets[it.set] ? CONFIG.sets[it.set].name : '');
+const FX_TXT = { atk: (v) => `+${pct(v)} Attack`, hp: (v) => `+${pct(v)} Health`, spd: (v) => `+${pct(v)} Speed`, crit: (v) => `+${pct(v)} crit chance`, timer: (v) => `+${pct(v)} boss timer`, lifesteal: (v) => `${pct(v)} lifesteal`, thorns: (v) => `${pct(v)} thorns`, critdmg: (v) => `+${pct(v)} crit damage`, boss: (v) => `+${pct(v)} boss damage`, guard: (v) => `${pct(v)} less damage taken`, ward: (v) => `+${pct(v)} damage on trait floors`, train: (v) => `+${pct(v)} Sweat from sessions`, swift: (v) => `+${pct(v)} Speed` };
+export const fxText = (fx) => Object.entries(fx).map(([k, v]) => FX_TXT[k](v)).join(', ');
+const setDot = (id) => `<i class="tw-sd" style="background:${PAL[SET_COLOR[id]]}" aria-hidden="true"></i>`;
+const setTag = (id) => `<span class="tw-set">${setDot(id)}${esc(CONFIG.sets[id].name)}</span>`;
+// 'Set 1/3 to 2/3: gains +10% Attack' lines for a swap that changes a set's count
+const setGain = (id, from, to) => { const d = CONFIG.sets[id], out = []; for (const [n, fx, nm] of [[2, d.two, '2 piece'], [3, d.three, '3 piece']]) { if (from < n && to >= n) out.push([1, `${nm}: ${fxText(fx)}`]); if (from >= n && to < n) out.push([-1, `${nm}: ${fxText(fx)}`]); } return out; };
 const itemName = (it) => `Tier ${it.tier} ${it.rarity}${it.lvl ? ` +${it.lvl}` : ''}`;
-const itemLabel = (it) => `${itemName(it)}, power ${pw(it)}, +${pct(it.bonus)} ${STAT_NAME[SLOT_STAT[it.slot]]}${it.aff && it.aff.length ? ', ' + it.aff.map((a) => `${AFF_NAME[a.id]} ${pct(a.v)}`).join(', ') : ''}${it.lock ? ', locked' : ''}`;
+const itemLabel = (it) => `${itemName(it)}${setName(it) ? `, ${setName(it)} set piece` : ''}, power ${pw(it)}, +${pct(it.bonus)} ${STAT_NAME[SLOT_STAT[it.slot]]}${it.aff && it.aff.length ? ', ' + it.aff.map((a) => `${AFF_NAME[a.id]} ${pct(a.v)}`).join(', ') : ''}${it.lock ? ', locked' : ''}`;
 export function gearHtml(g) {
   const rows = SLOTS.map((s) => { const it = g.gear[s];
     return `<button class="tw-row tw-gear" data-slot="${s}" data-act="gearSheet" aria-label="${esc(`${SLOT_NAME[s]}: ${it ? itemLabel(it) : 'empty'}. Opens the forge and stash`)}"><div class="tw-main"><div class="tw-nm">${SLOT_NAME[s]}${it ? ` <span class="tw-lv" style="color:${RCOL[it.rarity]}">${esc(itemName(it))}${it.lock ? ' &middot; locked' : ''}</span>` : ''}</div>
       <div class="tw-sub" style="color:${it ? RCOL[it.rarity] : 'var(--muted)'}">${it ? `+${pct(it.bonus)} ${STAT_NAME[SLOT_STAT[s]]} &middot; Power ${pw(it)}` : 'Empty. Bosses drop gear.'}</div>${it && it.aff.length ? `<div class="tw-chips">${chips(it)}</div>` : ''}</div><span class="tw-go" aria-hidden="true">&rsaquo;</span></button>`; }).join('');
-  return rows + `<div class="tw-row tw-stashline"><div class="tw-sub">Stash ${g.stash.length}/${stashMax(g)}. Tap a slot to forge, lock or swap from the stash.</div>
+  const as = activeSets(g), srows = as.length ? as.map((x) => { const d = CONFIG.sets[x.id];
+    return `<div class="tw-row tw-setrow"><div class="tw-main"><div class="tw-nm">${setTag(x.id)} <span class="tw-lv">${x.n}/3 worn</span></div><div class="tw-sub ${x.two ? 'on' : ''}">2 pieces: ${fxText(d.two)}${x.two ? ' (on)' : ''}</div><div class="tw-sub ${x.three ? 'on' : ''}">3 pieces: ${fxText(d.three)}${x.three ? ' (on) and a coloured trim on your hero' : ''}</div></div></div>`; }).join('')
+    : `<div class="tw-row tw-setrow"><div class="tw-sub">No set pieces worn. Level up a move in real life to earn its gear set.</div></div>`;
+  return rows + srows + `<div class="tw-row tw-stashline"><div class="tw-sub">Stash ${g.stash.length}/${stashMax(g)}. Tap a slot to forge, lock or swap from the stash.</div>
     <button class="btn sm soft tw-buy" data-act="invSheet" aria-label="Open inventory: ${g.stash.length + SLOTS.filter((s) => g.gear[s]).length} items, try them on the hero">Inventory</button></div>`;
 }
 // The gear bottom sheet (app.js shows it): equipped item, forge, lock and the stash for one slot. msg is a short result line read out by VoiceOver.
@@ -66,7 +79,7 @@ export function gearSheet(g, slot, msg = '', id = null) {
 const KIND = { sword: 'short sword', longsword: 'longsword', axe: 'axe', spear: 'spear', greatsword: 'greatsword', tunic: 'tunic', vest: 'leather vest', chain: 'chainmail', plate: 'plate armour', cape: 'caped plate armour', cloth: 'cloth boots', leather: 'leather boots', iron: 'iron greaves' };
 const lookKey = (it) => (it && (it.look || lookOf(it))) || '';
 export const kindOf = (it) => KIND[lookKey(it).split('.')[1]] || SLOT_NAME[it.slot].toLowerCase();
-export const tileLabel = (it, equipped) => `Tier ${it.tier} ${it.rarity} ${kindOf(it)}${it.lvl ? ` +${it.lvl}` : ''}, power ${pw(it)}${equipped ? ', equipped' : ''}${it.lock ? ', locked' : ''}`;
+export const tileLabel = (it, equipped) => `Tier ${it.tier} ${it.rarity} ${kindOf(it)}${setName(it) ? `, ${setName(it)} set piece` : ''}${it.lvl ? ` +${it.lvl}` : ''}, power ${pw(it)}${equipped ? ', equipped' : ''}${it.lock ? ', locked' : ''}`;
 export const INV_TABS = [['all', 'All'], ['weapon', 'Weapon'], ['armour', 'Armour'], ['boots', 'Boots']], INV_SORTS = [['power', 'Power'], ['rarity', 'Rarity'], ['newest', 'Newest']];
 export const newInv = (slot = 'all') => ({ type: 'inv', slot, sort: 'power', sel: null, msg: '' });
 const LOCK_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm2 0h6V8a3 3 0 0 0-6 0z"/></svg>';
@@ -74,10 +87,10 @@ const SHORT = { 'short sword': 'Short sword', longsword: 'Longsword', axe: 'Axe'
 const icon = (look) => { const c = iconInfo(look); return `<img class="inv-ic" alt="" width="${c.w * c.s}" height="${c.h * c.s}" src="${c.url}">`; };
 const tileHtml = ({ it, equipped }, sel) => `<button class="inv-tile r-${it.rarity}${sel ? ' on' : ''}" data-act="invSel" data-id="${it.id}" aria-pressed="${sel}" aria-label="${esc(tileLabel(it, equipped))}">
   <span class="inv-bd" aria-hidden="true">${equipped ? '<i class="inv-eq">Equipped</i>' : ''}${it.lock ? `<i class="inv-lk">${LOCK_SVG}</i>` : ''}</span>
-  <span class="inv-ib">${icon(lookKey(it))}</span><span class="inv-t" aria-hidden="true">Tier ${it.tier}</span><span class="inv-k" aria-hidden="true">${esc(SHORT[kindOf(it)] || '')}</span></button>`;
+  <span class="inv-ib">${icon(lookKey(it))}</span><span class="inv-t" aria-hidden="true">Tier ${it.tier}</span><span class="inv-k" aria-hidden="true">${esc(SHORT[kindOf(it)] || '')}</span>${it.set ? `<span class="inv-sp" aria-hidden="true">${setDot(it.set)}${esc(setName(it))}</span>` : ''}</button>`;
 const slotCount = (g, sl) => inventory(g, sl).length;
 // the looks the preview wears: what is equipped, with the selected item tried on over its slot
-export const gearLooks = (g, tryOn = null) => SLOTS.map((s) => lookKey(tryOn && tryOn.slot === s ? tryOn : g.gear[s]));
+export const gearLooks = (g, tryOn = null) => { const l = SLOTS.map((s) => lookKey(tryOn && tryOn.slot === s ? tryOn : g.gear[s])), c = setCounts(g, tryOn), full = SET_IDS.find((id) => c[id] === 3); return full ? [...l, full] : l; };   // a 4th entry: the set whose 3 piece trim the hero wears
 const STAT_FMT = { atk: (v) => fmt(v), hp: (v) => fmt(v), spd: (v) => `${v.toFixed(2)}/s` };
 const dTxt = (d, unit = (v) => String(v), eps = 0.05) => Math.abs(d) < eps ? '<span class="inv-d">no change</span>' : `<span class="inv-d ${d > 0 ? 'up' : 'dn'}"><span aria-hidden="true">${d > 0 ? '+' : '-'}${unit(Math.abs(d))}</span><span class="sr">${d > 0 ? 'up' : 'down'} ${unit(Math.abs(d))}</span></span>`;
 export function cmpHtml(g, ui) {
@@ -86,7 +99,9 @@ export function cmpHtml(g, ui) {
   const c = compareItem(g, it), nm = STAT_NAME[c.stat], f = STAT_FMT[c.stat];
   const pl = c.same ? `Power <b class="tnum">${pw(it)}</b> <span class="inv-d">worn now</span>` : `Power <b class="tnum">${pw(it)}</b> ${dTxt(c.dPower)}<span class="inv-vs">${c.cur ? `equipped is ${pw(c.cur)}` : 'slot is empty'}</span>`;
   const sl = c.same ? `${nm} <b class="tnum">${f(c.after)}</b>` : `${nm} <b class="tnum">${f(c.before)} &rarr; ${f(c.after)}</b> ${dTxt(c.dStat, (v) => c.stat === 'spd' ? v.toFixed(2) : fmt(v), c.stat === 'spd' ? 0.005 : 0.5)}`;
-  return `${msg}<div class="inv-nm" style="color:${RCOL[it.rarity]}">${esc(itemName(it))} ${esc(kindOf(it))}${c.same ? '' : ' <span class="inv-try">Trying on</span>'}</div><div class="inv-ln">${pl}</div><div class="inv-ln">${sl}</div>${it.aff.length ? `<div class="tw-chips">${chips(it)}</div>` : '<div class="inv-hint">No affixes.</div>'}`;
+  const sn = it.set ? `<div class="inv-ln">${setTag(it.set)} <b class="tnum">${setCounts(g)[it.set] || 0}/3${c.same ? '' : ` &rarr; ${setCounts(g, it)[it.set] || 0}/3`}</b></div>` : '';
+  const sg = c.sets.flatMap((x) => setGain(x.id, x.from, x.to).map(([d, t]) => `<div class="inv-ln inv-sc"><span class="inv-d ${d > 0 ? 'up' : 'dn'}"><span aria-hidden="true">${d > 0 ? '+' : '-'}</span><span class="sr">${d > 0 ? 'gains' : 'loses'}</span> ${esc(CONFIG.sets[x.id].name)} ${esc(t)}</span></div>`)).join('');
+  return `${msg}<div class="inv-nm" style="color:${RCOL[it.rarity]}">${esc(itemName(it))} ${esc(setName(it))} ${esc(kindOf(it))}${c.same ? '' : ' <span class="inv-try">Trying on</span>'}</div><div class="inv-ln">${pl}</div><div class="inv-ln">${sl}</div>${sn}${sg}${it.aff.length ? `<div class="tw-chips">${chips(it)}</div>` : '<div class="inv-hint">No affixes.</div>'}`;
 }
 // the three buttons under the preview: label, text, disabled, pressed
 export function invActs(g, ui) {
@@ -189,6 +204,17 @@ function respecParts(g) {
 }
 const respecRow = (g) => { const p = respecParts(g);
   return `<div class="tw-row" data-row="respec"><div class="tw-main">${p.main}</div><button class="btn sm soft tw-buy" data-act="respec" aria-label="${esc(p.label)}" ${p.off ? 'disabled' : ''}>${p.txt}</button></div>`; };
+// ---- weekly bounty card ----
+const longDay = (d) => { const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).toLocaleDateString('en-AU', { weekday: 'long' }); };
+export function bountyHtml(state) {
+  const st = bountyStatus(state, todayStr()); if (!st) return '';
+  const b = st.b, g = ensureGame(state), p = Math.round(100 * st.now / st.target);
+  const sub = st.claimed ? 'Claimed. A new bounty arrives on Monday.' : st.claimable ? (st.last ? 'Done. Claim it before today ends.' : 'Done. Open your chest.') : `${st.now} of ${st.target} done. Ends ${longDay(st.endsOn)}.`;
+  return `<div class="tw-row tw-bounty"><div class="tw-main"><div class="tw-nm">${esc(bountyText(b))}</div><div class="tw-sub tnum">${esc(sub)}</div>
+    <div class="tw-prog" role="progressbar" aria-label="${esc(`Bounty progress: ${st.now} of ${st.target}`)}" aria-valuemin="0" aria-valuemax="${st.target}" aria-valuenow="${st.now}"><i style="width:${p}%"></i></div>
+    <div class="tw-sub">Chest: a rare or better item (tier ${tierNow(g)}) and 1 boss key.</div></div>
+    <button class="btn sm tw-buy" data-act="claimBounty" aria-label="${esc(st.claimed ? 'Bounty already claimed' : st.claimable ? `Claim the bounty chest: ${bountyText(b)}` : `Claim, not finished yet: ${st.now} of ${st.target}`)}" ${st.claimable ? '' : 'disabled'}>${st.claimed ? 'Claimed' : 'Claim'}</button></div>`;
+}
 const WAIT_TXT = 'Waiting at the boss door. Train to earn a key.';
 export function awayHtml(a) {
   if (!a) return '';
@@ -214,20 +240,22 @@ export function canvasLabel(g) {
   return `${zoneOf(g.floor).name}, floor ${g.floor}: your hero fights ${who}. ${traitLine(g.floor)}`;
 }
 export function viewTower(state) {
-  const g = ensureGame(state);
+  const g = ensureGame(state); ensureBounty(state);
   const cur = (ic, nm, key, v) => `<div class="tw-cur" role="group" data-twg="${key}" aria-label="${nm} ${Math.round(v)}"><span class="tw-ci" aria-hidden="true">${ic}</span><b class="tnum" data-tw="${key}" aria-hidden="true">${fmt(v)}</b><span aria-hidden="true">${nm}</span></div>`;
   const asc = g.tokens > 0 ? `<div class="section"><h2 class="title">Ascend</h2><div class="note tw-asc"><h3>Ascend token &times;${g.tokens}</h3><p>Reset to floor 1 for <b>+${soulsFor(g)} souls</b> (from floor ${g.runMax}). Souls are spent in the Soul tree and kept forever. Your best gear item and any locked items stay. Other slots and unlocked stash items reset. Stats, Focus upgrades and currencies stay.</p>
     <button class="btn sm" data-act="ascend" data-tw-asc ${canAscend(g) ? '' : 'disabled'}>Ascend</button>${canAscend(g) ? '' : `<p class="small muted" style="margin:8px 0 0">Reach floor ${CONFIG.ascendMinFloor} first. You are at ${g.runMax}.</p>`}</div></div>` : '';
   return `<div class="section"><div class="tw-battle"><div class="tw-badge tnum" id="tw-badge">${badgeText(g)}</div><canvas id="tw-canvas" role="img" data-act="heroTap" aria-label="${esc(canvasLabel(g))}"></canvas><div class="tw-live" id="tw-live" role="status" aria-live="polite"></div></div>
     <p class="tw-trait" id="tw-trait">${esc(traitLine(g.floor))}</p><p class="tw-wait" id="tw-wait" ${atDoor(g) ? '' : 'hidden'}>${WAIT_TXT}</p>
     <div id="tw-away">${awayHtml(g.away)}</div>
-    <div class="tw-curs">${cur('&#9889;', 'Sweat', 'sweat', g.sweat)}${cur('&#9670;', 'Focus', 'focus', g.focus)}${cur('&#10022;', 'Souls', 'souls', soulsLeft(g))}</div></div>
+    <div class="tw-curs">${cur('&#9889;', 'Sweat', 'sweat', g.sweat)}${cur('&#9670;', 'Focus', 'focus', g.focus)}${cur('&#10022;', 'Souls', 'souls', soulsLeft(g))}</div>
+    ${restedPending(state, todayStr()) ? `<p class="tw-rested" role="status"><span aria-hidden="true">&#9790;</span> Rested: +${Math.round(CONFIG.restedBonus * 100)}% Sweat on your next session</p>` : ''}</div>
+  <div class="section"><h2 class="title">Weekly bounty</h2><div class="tw-card" id="tw-bounty">${bountyHtml(state)}</div></div>
   <div class="section"><h2 class="title">Hero</h2><div class="tw-card">${['atk', 'hp', 'spd'].map((s) => statRow(g, s)).join('')}</div></div>
   <div class="section"><h2 class="title">Gear</h2><div class="tw-card" id="tw-gear">${gearHtml(g)}</div></div>
   <div class="section"><h2 class="title">Focus upgrades</h2><div class="tw-card">${FOCUS_ROWS.map((r) => focusRow(g, r)).join('')}</div><p class="small muted tw-note">Spend Focus on the Forge too: tap a gear slot above.</p></div>
   <div class="section"><h2 class="title">Soul tree</h2><div class="tw-card" id="tw-souls">${TALENTS.map((k) => talentRow(g, k)).join('')}${respecRow(g)}</div></div>
   ${asc}
-  <div class="section"><h2 class="title">How you earn</h2><div class="tw-card tw-how"><p><b><span aria-hidden="true">&#9889;</span> Sweat</b> from training. Full session 100, minimum day 40, times your streak bonus (up to &times;1.5). Only 2 sessions a day pay, the 2nd half.</p><p><b>&#9889; Bonus</b> level-up +300 and an Ascend token, new best +100.</p><p><b>&#9670; Focus</b> from fasts that reach your &ldquo;counts after&rdquo; hours: 30, plus 5 for each extra hour, up to 80.</p><p><b><span aria-hidden="true">&#128273;</span> Boss keys</b> from training: 1 for each session (the first 2 a day, minimum days count) and 1 more for a level-up. A boss needs a key. You hold up to ${CONFIG.keyCap}, and a lost boss fight keeps its key.</p><p><b>&#10022; Souls</b> from ascending, spent on talents. Missed days cost nothing. The hero keeps climbing.</p></div></div>`;
+  <div class="section"><h2 class="title">How you earn</h2><div class="tw-card tw-how"><p><b><span aria-hidden="true">&#9889;</span> Sweat</b> from training. Full session 100, minimum day 40, times your streak bonus (up to &times;1.5). Only 2 sessions a day pay, the 2nd half.</p><p><b>&#9889; Bonus</b> level-up +300 and an Ascend token, new best +100.</p><p><b>&#9670; Focus</b> from fasts that reach your &ldquo;counts after&rdquo; hours: 30, plus 5 for each extra hour, up to 80.</p><p><b>Weekly bounty</b> a goal for the week from your real training. Claim it for a chest with a rare or better item and a boss key, until the Monday after it ends.</p><p><b>Gear sets</b> each move has a 3 piece set. Level up that move in real life to get a piece. Wear 2 or 3 pieces for bonuses. <b>Rest days</b> you plan in Settings keep your streak, and the next session after one earns Rested (+10% Sweat).</p><p><b><span aria-hidden="true">&#128273;</span> Boss keys</b> from training: 1 for each session (the first 2 a day, minimum days count) and 1 more for a level-up. A boss needs a key. You hold up to ${CONFIG.keyCap}, and a lost boss fight keeps its key.</p><p><b>&#10022; Souls</b> from ascending, spent on talents. Missed days cost nothing. The hero keeps climbing.</p></div></div>`;
 }
 
 const R = (x, c, X, Y, w, h) => { x.fillStyle = c; x.fillRect(X, Y, w, h); };
@@ -332,6 +360,7 @@ export function refreshTowerUi(state) {
   for (const k of TALENTS) patch('tal:' + k, talentParts(g, k));
   patch('respec', respecParts(g));
   document.querySelectorAll('[data-tw-asc]').forEach((e) => { e.disabled = !canAscend(g); });
+  const be = document.getElementById('tw-bounty'); if (be) { const bh = bountyHtml(state); if (be.dataset.sig !== bh) { be.dataset.sig = bh; be.innerHTML = bh; } }
   const ge = document.getElementById('tw-gear'), gs = JSON.stringify([g.gear, g.stash.length, stashMax(g)]); if (ge && ge.dataset.sig !== gs) { ge.dataset.sig = gs; ge.innerHTML = gearHtml(g); }
 }
 function updateUi(m, now) {
@@ -346,11 +375,11 @@ function updateUi(m, now) {
 // The loot card and the lost-fight note live in #tw-live over the canvas.
 const R_HEX = { common: PAL.steelL, rare: PAL.blueL, epic: PAL.purL };
 export function closeLoot() { const el = document.getElementById('tw-live'); if (el) el.innerHTML = ''; if (M) { M.msgAt = 0; M.loot = null; } }
-export function lootHtml(g, rec) {
+export function lootHtml(g, rec, kicker = 'Boss down', extra = '') {
   const it = rec, cur = g.gear[it.slot], stashed = !it.equipped && !!findItem(g, it.id), off = !stashed || !!(cur && cur.lock);
-  return `<div class="tw-loot" role="group" aria-label="${esc(`Boss loot: ${itemLabel(it)}, ${it.equipped ? 'equipped' : stashed ? 'in the stash' : 'scrapped'}`)}"><div class="tw-lk">Boss down</div>
-    <div class="tw-lr"><span class="tw-li" style="border-color:${R_HEX[it.rarity]}">${icon(lookKey(it))}</span><div class="tw-lm"><div class="tw-ln" style="color:${R_HEX[it.rarity]}">${esc(itemName(it))} ${esc(kindOf(it))}</div><div class="tw-lp">${it.rarity} &middot; Power ${pw(it)} &middot; +${pct(it.bonus)} ${STAT_NAME[SLOT_STAT[it.slot]]}</div></div></div>
-    <div class="tw-chips">${chips(it) || '<span class="tw-sub">No traits</span>'}</div>
+  return `<div class="tw-loot" role="group" aria-label="${esc(`${kicker === 'Boss down' ? 'Boss loot' : kicker}: ${itemLabel(it)}, ${it.equipped ? 'equipped' : stashed ? 'in the stash' : 'scrapped'}`)}"><div class="tw-lk">${esc(kicker)}</div>
+    <div class="tw-lr"><span class="tw-li" style="border-color:${R_HEX[it.rarity]}">${icon(lookKey(it))}</span><div class="tw-lm"><div class="tw-ln" style="color:${R_HEX[it.rarity]}">${esc(itemName(it))} ${esc(setName(it))} ${esc(kindOf(it))}</div><div class="tw-lp">${it.rarity}${it.set ? ` &middot; ${esc(setName(it))} set` : ''} &middot; Power ${pw(it)} &middot; +${pct(it.bonus)} ${STAT_NAME[SLOT_STAT[it.slot]]}</div></div></div>
+    <div class="tw-chips">${chips(it) || '<span class="tw-sub">No traits</span>'}</div>${extra}
     <div class="tw-lb"><button class="btn sm" data-act="lootEquip" data-id="${it.id}" aria-label="${off ? (it.equipped ? 'Already equipped' : cur && cur.lock ? 'Cannot equip, the equipped item is locked' : 'Cannot equip') : `Equip ${esc(itemLabel(it))}`}" ${off ? 'disabled' : ''}>${it.equipped ? 'Equipped' : 'Equip'}</button><button class="btn sm soft" data-act="lootKeep" aria-label="Keep it and close">Keep</button></div></div>`;
 }
 function showLoot(m, rec) {
@@ -358,6 +387,13 @@ function showLoot(m, rec) {
   m.loot = rec; el.innerHTML = lootHtml(m.g, rec);
   const b = el.querySelector('button:not([disabled])'); if (b) b.focus({ preventScroll: true });
   if (m.tone) m.tone(true);
+}
+// The chest from a claimed bounty uses the same loot card, over the battle canvas.
+export function showChest(g, rec, keys) {
+  const el = document.getElementById('tw-live'); if (!el) return;
+  el.innerHTML = lootHtml(g, rec, 'Bounty chest', keys > 0 ? `<div class="tw-sub tw-lkey"><span aria-hidden="true">&#128273;</span> +${keys} boss key</div>` : '<div class="tw-sub tw-lkey">Boss keys are full</div>');
+  if (M) { M.loot = rec; M.msgAt = 0; }
+  const b = el.querySelector('button:not([disabled])'); if (b) b.focus({ preventScroll: true });
 }
 function showLost(m) {
   const el = document.getElementById('tw-live'); if (!el) return;

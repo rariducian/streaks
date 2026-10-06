@@ -51,6 +51,7 @@ export function defaultState(now = new Date()) {
     settings: {
       fastMinHours: 12, fastGoalHours: 16, sessionMinutes: 10, workSec: DEFAULT_WORK_SEC, soundOn: true,
       pullupBar: false, growthDismissedAt: null, lastBackupAt: null, createdAt: now.toISOString(),
+      restDays: [], restHistory: [],
     },
     rotationIndex: 0,
     moves: Object.fromEntries(Object.keys(MOVES).map((id) => [id, defaultMove(id)])),
@@ -228,14 +229,52 @@ export function fastingDates(state, now = new Date()) {
   return [...set].sort();
 }
 
+// ---------- planned rest days ----------
+// settings.restDays: up to 2 weekdays (Mon = 0 ... Sun = 6). settings.restHistory: [{ from: date, days }] sorted by date, one entry per change, so a change
+// only counts from the day it was made and never rewrites past streaks. Empty history with restDays set (an odd import) applies them throughout.
+export const MAX_REST_DAYS = 2;
+const cleanRest = (a) => [...new Set((Array.isArray(a) ? a : []).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].slice(0, MAX_REST_DAYS).sort((x, y) => x - y);   // the first two picked
+export function restDaysAt(settings, date) {
+  const h = settings && Array.isArray(settings.restHistory) ? settings.restHistory.filter((e) => e && typeof e.from === 'string') : [];
+  if (!h.length) return cleanRest(settings && settings.restDays);
+  let days = [];
+  for (const e of h) if (e.from <= date) days = e.days;
+  return cleanRest(days);
+}
+// (date) => is it a planned rest day on that date. null settings means none.
+export const restFn = (settings) => (date) => restDaysAt(settings, date).includes(dowMon(date));
+export function setRestDays(state, days, today = todayStr()) {
+  const s = clone(state), next = cleanRest(days), cur = restDaysAt(s.settings, today);
+  let h = (Array.isArray(s.settings.restHistory) ? s.settings.restHistory : []).filter((e) => e && typeof e.from === 'string');
+  if (!h.length && cleanRest(s.settings.restDays).length) h = [{ from: '0000-01-01', days: cleanRest(s.settings.restDays) }];   // keep what was in force until today
+  if (cur.join() !== next.join() || (!h.length && next.length)) {
+    h = h.filter((e) => e.from !== today); h.push({ from: today, days: next }); h.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  }
+  s.settings.restDays = next; s.settings.restHistory = h;
+  return s;
+}
+// Rest days strictly between two dates (a < d < b): a planned rest day passed with no training since the last session.
+export function restBetween(isRest, a, b) {
+  const end = Math.min(dayNum(b), dayNum(a) + 366);
+  for (let n = dayNum(a) + 1; n < end; n++) if (isRest(fromDayNum(n))) return true;
+  return false;
+}
+// "Rested": the next session after a passed rest day (no training since the last session) gets the Tower bonus. One-off, so it never stacks.
+export function restedPending(state, today) {
+  const ds = trainingDates(state).filter((d) => d <= today);
+  return !!ds.length && restBetween(restFn(state.settings), ds[ds.length - 1], today);
+}
+
 // ---------- streaks ----------
-export function computeStreak(dates, today) {
+// isRest(date): optional; with it the result also has restDates. A planned rest day with no training is a free freeze: it keeps the streak, does not grow it and costs no freeze.
+export function computeStreak(dates, today, isRest = null) {
   const set = new Set(dates);
   const past = [...set].filter((d) => d <= today).sort();
   const out = { current: 0, longest: 0, freezes: 0, frozenDates: [], doneToday: set.has(today) };
+  if (isRest) out.restDates = [];   // the result keeps its old shape when no rest days are given
   if (!past.length) return out;
   let streak = 0, longest = 0, freezes = 0;
-  const frozen = [];
+  const frozen = [], rested = [];
   const end = dayNum(today);
   for (let n = dayNum(past[0]); n <= end; n++) {
     const d = fromDayNum(n);
@@ -243,6 +282,8 @@ export function computeStreak(dates, today) {
       streak += 1;
       if (streak % 7 === 0) freezes = Math.min(2, freezes + 1);
       longest = Math.max(longest, streak);
+    } else if (isRest && isRest(d)) {
+      rested.push(d);   // planned rest (today included): nothing to break, nothing to spend
     } else if (d === today) {
       // today not done yet: never breaks the streak
     } else if (freezes > 0) {
@@ -251,18 +292,18 @@ export function computeStreak(dates, today) {
       streak = 0;
     }
   }
-  return { current: streak, longest, freezes, frozenDates: frozen, doneToday: out.doneToday };
+  return { current: streak, longest, freezes, frozenDates: frozen, ...(isRest ? { restDates: rested } : {}), doneToday: out.doneToday };
 }
 
-export function heatmap(dates, frozenDates, today, weeks = 17) {
-  const on = new Set(dates), fr = new Set(frozenDates || []);
+export function heatmap(dates, frozenDates, today, weeks = 17, restDates = []) {
+  const on = new Set(dates), fr = new Set(frozenDates || []), rs = new Set(restDates || []);
   const first = addDays(weekStartOf(today), -7 * (weeks - 1));
   const cols = [];
   for (let w = 0; w < weeks; w++) {
     const col = [];
     for (let d = 0; d < 7; d++) {
       const date = addDays(first, w * 7 + d);
-      col.push({ date, on: on.has(date), frozen: fr.has(date), future: date > today });
+      col.push({ date, on: on.has(date), frozen: fr.has(date), rest: rs.has(date) && !on.has(date), future: date > today });
     }
     cols.push(col);
   }

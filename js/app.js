@@ -4,13 +4,14 @@ import {
   todayStr, addDays, defaultState, sessionPlan, placeFromCalibration, applyCalibration, finishSession,
   trainingDates, fastingDates, computeStreak, heatmap, runningFast, startFast, endFast, editFast,
   deleteFast, fastStage, fastStats, moveTrend, moveProgress, recentEvents, growthOffer,
-  acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals
+  acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, repTotals, sessionTotals, restFn, setRestDays, MAX_REST_DAYS
 } from './logic.js';
 import { load, save, exportJSON, importJSON, normalise, STORAGE_KEY } from './store.js';
 import { migrate } from './logic.js';
 import { ensurePersist, idbStore, listSnaps, snapshot, restoreOffer, importConfirm, restoreConfirm, backupCardText, fmtSize } from './backup.js';
-import { ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, forge, forgeCost, toggleLock, equip, findItem, atDoor, fightFloor, readyBoss } from './game/engine.js';
-import { viewTower, mountTower, unmountTower, towerMounted, refreshTowerUi, gearSheet, invSheet, invPatch, mountInv, unmountInv, newInv, equipMsg, heroHit, closeLoot, keysLabel, AFF_NAME } from './game/view.js';
+import { CONFIG, ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, forge, forgeCost, toggleLock, equip, findItem, atDoor, fightFloor, readyBoss } from './game/engine.js';
+import { viewTower, mountTower, unmountTower, towerMounted, refreshTowerUi, gearSheet, invSheet, invPatch, mountInv, unmountInv, newInv, equipMsg, heroHit, closeLoot, keysLabel, AFF_NAME, showChest } from './game/view.js';
+import { ensureBounty, bountyStatus, bountyShort, bountyText, claimBounty } from './game/bounty.js';
 
 /* ---------- helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -121,11 +122,11 @@ function ring({ r, stroke, pct, color, size, track, label, attr = 'data-ring', e
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 // Activity-ring style card: the arc is TODAY's completion; the dots are this week (Mon to Sun).
 function streakCard({ label, st, dates, pct, color, meta, now, attr }) {
-  const today = todayStr(now), set = new Set(dates), fz = new Set(st.frozenDates);
+  const today = todayStr(now), set = new Set(dates), fz = new Set(st.frozenDates), rs = new Set(st.restDates || []);
   const keep = now.getHours() >= 18 && !st.doneToday && st.current > 0;
   const days = weekDates().map((d, i) => {
-    const on = set.has(d), f = !on && fz.has(d), td = d === today;
-    return { l: DOW[i][0], cls: `${on ? 'on' : ''} ${f ? 'fz' : ''} ${td ? 'td' : ''}`, say: `${DOW[i]} ${on ? 'done' : f ? 'streak freeze' : td ? 'today, not yet' : d > today ? 'upcoming' : 'missed'}` };
+    const on = set.has(d), f = !on && fz.has(d), r = !on && !f && rs.has(d), td = d === today;
+    return { l: DOW[i][0], cls: `${on ? 'on' : ''} ${f ? 'fz' : ''} ${r ? 'rs' : ''} ${td ? 'td' : ''}`, say: `${DOW[i]} ${on ? 'done' : f ? 'streak freeze' : r ? (td ? 'planned rest day, today' : 'planned rest day') : td ? 'today, not yet' : d > today ? 'upcoming' : 'missed'}` };
   });
   const state_ = st.doneToday ? 'done' : pct > 0 ? `${Math.round(pct * 100)} per cent` : 'not yet';
   return `<div class="ringcard" style="--dc:${color}">${st.freezes > 0 ? `<span class="frz" aria-label="${st.freezes} streak freeze${st.freezes === 1 ? '' : 's'}">&#10052;&#xFE0E; ${st.freezes}</span>` : ''}
@@ -160,14 +161,18 @@ function renderPill() {
 function sessionHero(done) {
   const plan = sessionPlan(state);
   const lines = plan.moves.map((m) => `<div class="line">${I.bolt}<span>${esc(m.levelName)} &middot; ${m.needsCalibration ? 'test set first' : m.target + (m.unit === 'sec' ? ' sec' : ' reps') + (m.perSide ? ' each side' : '')}</span></div>`).join('');
+  const rest = !done && restFn(state.settings)(todayStr());   // a planned rest day with no training: the streak is safe, Start stays
   const buttons = done
     ? `<div class="donebar">Done today &#10003;</div><div class="sub-actions"><button class="link" data-act="startSession">Train again</button><button class="link" data-act="startMin">Minimum day (3 min)</button></div>`
     : `<button class="btn block" data-act="startSession">Start</button><div class="sub-actions"><button class="link" data-act="startMin">Minimum day (3 min)</button></div>`;
   return `<div class="section"><h2 class="title">Today's session</h2>
    <div class="hero"><div class="rowcard"><div class="poster ${esc(plan.dayId)}">${esc((dayShort[plan.dayId] || plan.dayName).toUpperCase())}<span class="spill o">Up next</span></div>
     <div class="rowbody"><div class="meta">Next in rotation</div><div class="rtitle">${esc(plan.dayName)} &middot; EMOM ${plan.minutes}</div>
-    <div class="line">${I.clock}<span>${plan.minutes} min &middot; ${plan.workSec} s work, ${60 - plan.workSec} s rest</span></div>${lines}</div></div>${buttons}</div></div>`;
+    <div class="line">${I.clock}<span>${plan.minutes} min &middot; ${plan.workSec} s work, ${60 - plan.workSec} s rest</span></div>${lines}</div></div>${rest ? `<div class="restnote">${I.moon}<span>Rest day: your streak is safe</span></div>` : ''}${buttons}</div></div>`;
 }
+// 'Vanguard weapon (equipped)' for a set piece record
+const CONFIG_SETS = CONFIG.sets;
+const setLabel = (p) => `${(CONFIG_SETS[p.set] || {}).name || ''} ${p.slot}${p.kind === 'upgrade' ? '' : p.equipped ? ' (equipped)' : ' (in the stash)'}`;
 // Under Today's session: a hero at a boss door (or about to be, with keys held) points you at the Tower.
 function keyChip() {
   if (!state.game) return '';
@@ -176,10 +181,15 @@ function keyChip() {
   const txt = g.keys > 0 ? `${g.keys} key${g.keys === 1 ? '' : 's'}: fight the floor ${b || g.floor} boss` : 'A boss is waiting: train to fight it';
   return `<div class="section keysec"><button class="keychip" data-act="toTower" aria-label="${esc(`${g.keys > 0 ? nm + ': fight the floor ' + (b || g.floor) + ' boss' : 'A boss is waiting: train to fight it'}. Opens the Tower`)}"><span aria-hidden="true">&#128273;</span> ${txt}</button></div>`;
 }
+// One small line on Today: how the weekly bounty is going. It opens the Tower.
+function bountyLine() {
+  const st = bountyStatus(state, todayStr()); if (!st || st.claimed) return '';
+  return `<div class="section keysec"><button class="bountyline" data-act="toTower" aria-label="${esc(`Weekly bounty: ${bountyText(st.b)}, ${st.now} of ${st.target}${st.claimable ? ', ready to claim' : ''}. Opens the Tower`)}"><span>${st.claimable ? 'Bounty ready: claim your chest' : `Bounty: ${esc(bountyShort(st))}`}</span><span class="chev" aria-hidden="true">&rsaquo;</span></button></div>`;
+}
 function viewToday() {
   const today = todayStr(), now = new Date();
   const trDates = trainingDates(state), fsDates = fastingDates(state, now);
-  const tr = computeStreak(trDates, today);
+  const tr = computeStreak(trDates, today, restFn(state.settings));
   const fs = computeStreak(fsDates, today);
   const run = runningFast(state);
   const minH = state.settings.fastMinHours;
@@ -187,7 +197,7 @@ function viewToday() {
   const fsPct = fs.doneToday ? 1 : run ? Math.min(1, fHrs / minH) : 0;
   const fsMeta = fs.doneToday ? 'Counted today' : run ? `${fmtH(fHrs)} of ${minH}h` : 'No fast yet today';
   const done = tr.doneToday;
-  let html = `${sessionHero(done)}${keyChip()}
+  let html = `${sessionHero(done)}${keyChip()}${bountyLine()}
   <div class="section"><div class="rings">${streakCard({ label: 'Training', st: tr, dates: trDates, pct: done ? 1 : 0, color: 'var(--green)', meta: done ? 'Done today' : 'Not trained yet', now })}${streakCard({ label: 'Fasting', st: fs, dates: fsDates, pct: fsPct, color: 'var(--purple)', meta: fsMeta, now, attr: 'data-fring' })}</div></div>`;
   if (!run) html += `<div class="section"><h2 class="title"><button class="titlebtn" data-act="tab" data-tab="fast">Fast <span class="chev" aria-hidden="true">&rsaquo;</span></button></h2>
    <button class="fastchip" data-act="tab" data-tab="fast"><div class="poster fast">FAST</div><div><div class="t">Start a fast</div><div class="small muted">Goal ${state.settings.fastGoalHours}h</div></div></button></div>`;
@@ -277,8 +287,8 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const daysIn = (dates, n, today) => { const set = new Set(dates); let c = 0; for (let i = 0; i < n; i++) if (set.has(addDays(today, -i))) c++; return c; };
 function heatSvg(dates, color, name) {
   const today = todayStr();
-  const st = computeStreak(dates, today);
-  const weeks = heatmap(dates, st.frozenDates, today, 17);
+  const st = computeStreak(dates, today, name === 'Training' ? restFn(state.settings) : null);   // planned rest days are for training only
+  const weeks = heatmap(dates, st.frozenDates, today, 17, st.restDates);
   const c = 15, gp = 3, left = 14, top = 14;
   const W = left + weeks.length * (c + gp), H = top + 7 * (c + gp);
   let count = 0;
@@ -289,10 +299,10 @@ function heatSvg(dates, color, name) {
     if (d0.getMonth() !== lastM) { lastM = d0.getMonth(); out += `<text x="${left + x * (c + gp)}" y="9">${MON[lastM]}</text>`; }
     w.forEach((cell, y) => { if (cell.future) return;
       if (cell.on) count++;
-      const fill = cell.on ? color : cell.frozen ? 'var(--frozen)' : 'var(--cell)';
+      const fill = cell.on ? color : cell.frozen ? 'var(--frozen)' : cell.rest ? 'var(--restday)' : 'var(--cell)';
       out += `<rect x="${left + x * (c + gp)}" y="${top + y * (c + gp)}" width="${c}" height="${c}" rx="4" fill="${fill}"><title>${cell.date}</title></rect>`; });
   });
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${name} calendar for the last ${weeks.length} weeks: ${plural(count, 'day')} ${name === 'Training' ? 'trained' : 'fasted'}. Streak freeze days are light blue.">${out}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${name} calendar for the last ${weeks.length} weeks: ${plural(count, 'day')} ${name === 'Training' ? 'trained' : 'fasted'}. Streak freeze days are light blue.${name === 'Training' ? ' Planned rest days are sand.' : ''}">${out}</svg>`;
 }
 // Small line chart per move: ladder position by week. Line breaks at weeks with no sets.
 function trendCard(t) {
@@ -362,13 +372,14 @@ function viewProgress() {
   const today = todayStr();
   const tdates = trainingDates(state), fdates = fastingDates(state);
   const ev = recentEvents(state, 10);
-  const trSt = computeStreak(tdates, today), fsSt = computeStreak(fdates, today);
+  const trSt = computeStreak(tdates, today, restFn(state.settings)), fsSt = computeStreak(fdates, today);
   const trN = daysIn(tdates, 7, today), fsN = daysIn(fdates, 7, today);
   return `<div class="section"><h2 class="title">Highlights</h2><div class="feed">${ev.map((e) => { const [c, ic, t] = evLabel(e); return `<div class="ev"><div class="bd ${c}">${ic}</div><div><div>${t}</div><div class="when">${esc(dmy(new Date(e.at)))}</div></div></div>`; }).join('') || '<div class="empty">Your level-ups and personal bests will show here.</div>'}</div></div>
   <div class="section"><h2 class="title">Consistency</h2>
-    <div class="heat"><div class="hh"><span>Training</span><span class="muted">Best ${trSt.longest}</span></div><p class="chartsum">${trN} of the last 7 days.</p>${heatSvg(tdates, 'var(--green)', 'Training')}</div>
+    <div class="heat"><div class="hh"><span>Training</span><span class="muted">Best ${trSt.longest}</span></div><p class="chartsum">${trN} of the last 7 days.</p>${heatSvg(tdates, 'var(--green)', 'Training')}
+    <div class="legend"><span><i style="background:var(--green)"></i>Trained</span><span><i style="background:var(--restday)"></i>Planned rest day</span><span><i style="background:var(--frozen)"></i>Streak freeze used</span></div></div>
     <div class="heat"><div class="hh"><span>Fasting</span><span class="muted">Best ${fsSt.longest}</span></div><p class="chartsum">${fsN} of the last 7 days.</p>${heatSvg(fdates, 'var(--purple)', 'Fasting')}
-    <div class="legend"><span><i style="background:var(--frozen)"></i>Streak freeze used</span></div></div></div>`;
+    <div class="legend"><span><i style="background:var(--purple)"></i>Fasted</span><span><i style="background:var(--frozen)"></i>Streak freeze used</span></div></div></div>`;
 }
 
 /* ---------- sheets ---------- */
@@ -384,6 +395,8 @@ function sheetHtml() {
       <div class="field"><label for="sfmin">Fast counts after</label><select id="sfmin" data-change="fastMin">${hoursOpts(s.fastMinHours, [8, 10, 12, 13, 14, 16])}</select></div>
       <div class="field"><label for="sfgoal">Default fast goal</label><select id="sfgoal" data-change="fastGoal">${hoursOpts(s.fastGoalHours, [...new Set([12, 13, 14, 16, 18, 20, 24, s.fastGoalHours])].sort((a, b) => a - b))}</select></div>
       <div class="field"><label for="swork">Work time each minute</label><select id="swork" data-change="workSec">${WORK_SEC_CHOICES.map((w) => `<option value="${w}" ${w === workSecOf() ? 'selected' : ''}>${w} s work &middot; ${60 - w} s rest</option>`).join('')}</select></div>
+      <div class="field restf"><label id="rdl">Rest days</label><p class="small muted">Pick up to ${MAX_REST_DAYS}. On a rest day your training streak is safe. Training on one still counts.</p>
+        <div class="restchips" role="group" aria-labelledby="rdl">${DOW.map((d, i) => { const on = (s.restDays || []).includes(i), full = !on && (s.restDays || []).length >= MAX_REST_DAYS; return `<button class="chip ${on ? 'on' : ''}" aria-pressed="${on}" data-act="restDay" data-d="${i}" ${full ? 'disabled' : ''}>${d}</button>`; }).join('')}</div></div>
       <div class="field"><label>Sound</label>${toggle(s.soundOn, 'toggleSound')}</div>
       <div class="field"><label>I have a pull-up bar</label>${toggle(s.pullupBar, 'toggleBar')}</div>
       <div class="field"><label>Last backup</label><span class="muted">${s.lastBackupAt ? esc(dmy(new Date(s.lastBackupAt))) : 'Never'}</span></div>
@@ -432,6 +445,7 @@ function renderSheet() {
 let liveBoss = 0;   // set by the summary's Fight button: the boss floor render() plays live
 function render() {
   renderChrome();
+  if (tab === 'today' || tab === 'tower') { try { if (ensureBounty(state, todayStr())) save(state); } catch (e) { /* ignore */ } }   // this week's bounty is picked on first look
   const v = $('#view');
   const live = tab === 'tower' && liveBoss; liveBoss = 0;
   if (tab === 'tower') { syncRewards(state); if (!live || !readyBoss(state, live)) { offlineCatchUp(state); } }
@@ -563,6 +577,7 @@ function renderSession() {
       ${sm.totals && sm.totals.length ? `<div class="sumtot"><div class="small muted">This session</div>${sm.totals.map((t) => `${esc(noun(t.moveId))} <b class="tnum">${fmtAmt(t.total, t.unit)}</b>${t.bothSides ? ' <span class="muted">(both sides)</span>' : ''}`).join(' &middot; ')}</div>` : ''}
       ${sm.events.map((e) => { const [, ic, t] = evLabel(e); return `<div class="evcard">${ic} ${t}</div>`; }).join('')}
       ${sm.sweat > 0 ? `<div class="evcard"><span aria-hidden="true">&#9889;</span> +${sm.sweat} Sweat earned &middot; spend it in Tower</div>` : ''}
+      ${(sm.pieces || []).map((p) => `<div class="evcard"><span aria-hidden="true">&#9876;</span> ${p.kind === 'upgrade' ? 'Duplicate upgraded your' : 'New set piece:'} ${esc(setLabel(p))}</div>`).join('')}
       ${sm.keys > 0 ? `<div class="evcard"><span aria-hidden="true">&#128273;</span> +${sm.keys} boss key${sm.keys === 1 ? '' : 's'} earned</div>` : ''}
       ${sm.minimum ? '<p class="small muted">Minimum days keep your streak. They do not change your targets.</p>' : ''}`;
     bot = `${sm.fight ? '<button class="btn block" data-act="fightBoss"><span aria-hidden="true">&#9876;</span> Fight the boss</button>' : ''}${sm.sweat > 0 ? `<div class="two"><button class="btn soft" data-act="closeSess">Done</button><button class="btn ${sm.fight ? 'soft' : ''}" data-act="toTower">Open Tower</button></div>` : `<button class="btn block ${sm.fight ? 'soft' : ''}" data-act="closeSess">Done</button>`}`;
@@ -609,15 +624,15 @@ function finishRun(completed) {
   const minimum = s.minimum || completed < p.minutes;
   const res = finishSession(state, { startedAt: new Date(s.startMs).toISOString(), endedAt: new Date().toISOString(), minimum, sets, minutes: p.minutes });
   state = res.state; try { save(state); } catch (e) { toast('Could not save.'); }
-  const streak = computeStreak(trainingDates(state), todayStr()).current;
-  let sweat = 0, keys = 0, fight = 0;   // what this session (and its level-up and PB events) paid into the Tower, and the boss floor the Fight button plays (0: no button)
+  const streak = computeStreak(trainingDates(state), todayStr(), restFn(state.settings)).current;
+  let sweat = 0, keys = 0, fight = 0, pieces = [];   // what this session (and its level-up and PB events) paid into the Tower, and the boss floor the Fight button plays (0: no button)
   try {
     const r = syncRewards(state), g = ensureGame(state), last = state.sessions[state.sessions.length - 1];
     sweat = (g.paid['s:' + (last && last.id)] || 0) + (res.events || []).reduce((n, e) => n + (g.paid['e:' + e.id] || 0), 0);
-    keys = r.keys; fight = fightFloor(g);
+    keys = r.keys; fight = fightFloor(g); pieces = r.pieces || [];
     save(state);
-  } catch (e) { sweat = 0; keys = 0; fight = 0; }
-  s.summary = { sweat, keys, fight, minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })), totals: sessionTotals(sets) };
+  } catch (e) { sweat = 0; keys = 0; fight = 0; pieces = []; }
+  s.summary = { sweat, keys, fight, pieces, minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })), totals: sessionTotals(sets) };
   s.phase = 'summary'; renderSession();
 }
 async function endEarly() {
@@ -696,6 +711,12 @@ const act = {
   reset: async () => {
     if (!(await ask({ title: 'Reset all data?', message: 'This deletes all sessions, fasts and progress.', confirmLabel: 'Continue', destructive: true }))) return;
     if (await ask({ title: 'Really reset everything?', message: 'This cannot be undone.', confirmLabel: 'Reset everything', destructive: true })) { sheet = null; commit(defaultState(new Date())); toast('All data reset.'); }
+  },
+  restDay: (el) => { const d = Number(el.dataset.d), cur = state.settings.restDays || []; commit(setRestDays(state, cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d], todayStr())); },
+  claimBounty: () => {
+    const r = claimBounty(state, todayStr()); if (!r) return;
+    try { save(state); } catch (e) { toast('Could not save.'); }
+    refreshTowerUi(state); window.scrollTo(0, 0); showChest(ensureGame(state), r.item, r.keys);
   },
   toggleSound: () => { commit(withSettings(state, { soundOn: !state.settings.soundOn })); },
   toggleBar: () => { commit(setPullupBar(state, !state.settings.pullupBar)); },

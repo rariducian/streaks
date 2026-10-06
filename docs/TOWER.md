@@ -48,8 +48,8 @@ You check in for 1 to 2 minutes after a session, spend points, and look at the c
 ## Hero
 | Stat | Formula | Upgrade cost (Sweat) |
 |---|---|---|
-| Attack | (5 + 2·L) × 1.5^⌊L/10⌋ × gear × souls | 20 × 1.04^L |
-| Health | (50 + 15·L) × 1.5^⌊L/10⌋ × gear × souls | 20 × 1.04^L |
+| Attack | (5 + 2·L) × 1.5^⌊L/10⌋ × gear × souls × set | 20 × 1.038^L |
+| Health | (50 + 15·L) × 1.5^⌊L/10⌋ × gear × souls × set | 20 × 1.038^L |
 | Speed (hits/s) | min(3, 1 + 0.04·L) × gear | 25 × 1.05^L |
 
 - **Milestones:** every 10 levels of Attack or Health multiplies that stat by 1.5. This keeps late floors falling for a daily trainer.
@@ -153,8 +153,23 @@ The sim advances every frame, but painting is capped at about 20 fps and stops w
 - A short success or failure tone plays if sound is on.
 - **UI:** the badge shows keys (key glyph aria-hidden, label "2 boss keys"). While waiting, the canvas draws a closed gate in front of the boss, the hero idles and a line says so. Today shows a chip under Today's session: "A boss is waiting: train to fight it", or "2 keys: fight the floor 30 boss". It opens the Tower.
 
+## Rested (planned rest days)
+Rest days are set in the main app (Settings, up to 2 weekdays, `settings.restDays` plus `restHistory`). A planned rest day that passes with no training gives the hero **Rested**: the next session after it pays +10% Sweat (`CONFIG.restedBonus`, added to Stamina and the like). It is worked out in `syncRewards` from the dates (a rest day between the previous session and this one), so it is a one-off, never stacks, and a 2nd session the same day gets none. A small badge in the Tower shows it until you train. The streak multiplier counts through rest days.
+
+## Weekly bounty
+`js/game/bounty.js`. Each Monday a bounty is picked by a hash of the week start and your move levels (no dice): Train N days (3 to 5, last 4 weeks' average + 1), Beat your best on a move (a `pb` event that week), Level up any move, Full sessions (not minimum) on N days (2 to 4), or Fast N times past your minimum (2 to 4, only if you fasted in the last 4 weeks). Only `game.bounty = { week, kind, target, move?, claimed }` is saved. Progress is worked out from sessions, events and fasts of that week. A card in the Tower and a line on Today show it.
+- **Claim:** a chest with a guaranteed rare-or-better item at the current tier (`rollDrop` with `min: 'rare'`, auto-equipped if better, shown on the loot card) and 1 boss key (up to the cap). Once only.
+- **Expiry:** claimable through the Monday after its week. A finished unclaimed bounty stays on that Monday, then is replaced. An unfinished one is replaced on Monday.
+
+## Gear sets
+Each move has a 3 piece set (weapon, armour, boots) in `CONFIG.sets`: Vanguard (Push-up), Bulwark (Squat), Atlas (Hinge), Tidecaller (Row), Keystone (Core), Skyward (Overhead), Strider (Calf), Coil (Hamstring).
+- **Drops:** only a real `levelUp` event of that move (paid once, `game.paid['es:<event id>']`) gives a piece: one random missing slot, current tier, rare or better, normal affixes, `set` = move id. With all 3 owned the duplicate upgrades the weakest piece (to the current tier, affixes scaling, else +1 Temper level). The first sync pays at most `welcomeSets` (3) history pieces, newest first. Set pieces are scrapped last, and ascending keeps them.
+- **Bonus:** 2 worn pieces give `two`, 3 give `two` and `three`. Keys are atk, hp, spd (multipliers), crit, timer (boss timer) or an affix id, so they fold into `heroStats`, `affixTotal` (and its caps) and `bossTimer`, and so into `fight`. Vanguard +10% Attack, then +15% and +5% crit; Bulwark +10% Health, then +15% and 5% Guard; Atlas +5% Attack and Health, then +8% each and 8% Thorns; Tidecaller 5% Lifesteal, then 5% more and +5% Speed; Keystone +15% boss timer, then +15% more and +10% boss damage; Skyward +8% Speed, then +8% and +12% trait-floor damage; Strider +5% Sweat, then +5% and +8% Speed; Coil +4% crit, then +4% and +40% crit damage. (Tidecaller is a flat +5% lifesteal rather than "+15% of the lifesteal effect", so it works with no lifesteal affix.)
+- **UI:** a coloured set badge on inventory tiles, "2/3 Vanguard" and the bonus gained or lost in the compare panel (`compareItem(...).sets`), and the Gear section lists worn sets and which bonuses are on.
+- **Hero:** with 3 of a set worn the doll gets a set-coloured trim (4th entry of the looks array, `SET_COLOR` in sprites.js, palette roles `1` to `8`): sash, hem, shoulder, boot cuffs and weapon guard. Auto-equip still goes by power only, so wear a set piece from the inventory if you want the bonus.
+
 ## Tuning
-`node tools/tower-sim.mjs` simulates a daily trainer (greedy buyer, a level-up every 10 days, `LEVELUP=n` to change) and a player who never trains (they only hold the 3 welcome keys). The trainer earns keys from sessions and level-ups and also adds 60 Focus a day and spends it greedily on the Forge. See the sim output for the current numbers; the elite floors are the late walls.
+`node tools/tower-sim.mjs` simulates a daily trainer (greedy buyer, a level-up every 10 days that gives a set piece (`LEVELUP=n`, `SETMOVES=a,b`), 1 planned rest day a week (`REST=0` for none), a weekly bounty claimed when done) and a player who never trains (they only hold the 3 welcome keys). The trainer earns keys from sessions and level-ups and also adds 60 Focus a day and spends it greedily on the Forge. See the sim output for the current numbers; the elite floors are the late walls.
 
 ## Tab UI (phone first)
 1. **Battle panel:** a pixel canvas with the hero on the left and the enemy on the right. The badge reads like "Crypt · Floor 34 · boss in 6", shortened to "Crypt · F34 · boss 6" when the panel is under 340 px or the text would overflow. The trait line sits under the panel. The canvas label names the zone and enemy ("Crypt, floor 34: your hero fights a ghost"). It uses `image-rendering: pixelated`. See "Visual fight" and "Zones" below. With reduced motion it shows still frames: no lunges, floats, bobbing or flicker, and bars step instantly.
@@ -222,3 +237,6 @@ The hero is a paper doll (`heroMap(frame, looks)` in sprites.js): cape (behind),
 
 ## Out of scope for v1
 Sound, more than one hero, achievements.
+
+## Tuning log (rest, bounty, sets)
+With the trainer taking 1 rest day a week the longest stall rose to 6 days, so Attack and Health upgrade growth went from 1.04 to 1.038. Trainer: floor 51 at day 7, 85 at day 30, 108 at day 60, longest stall 4 days, 8 of 9 bounties claimed. Non-trainer stuck at 15. The sim trainer rarely has 2 pieces of a set worn in 60 days, so sets are a slow-burn bonus.
