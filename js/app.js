@@ -10,7 +10,7 @@ import { load, save, exportJSON, importJSON, normalise, STORAGE_KEY } from './st
 import { migrate } from './logic.js';
 import { ensurePersist, idbStore, listSnaps, snapshot, restoreOffer, importConfirm, restoreConfirm, backupCardText, fmtSize } from './backup.js';
 import { CONFIG, ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, forge, forgeCost, toggleLock, equip, findItem, atDoor, fightFloor, readyBoss } from './game/engine.js';
-import { viewTower, mountTower, unmountTower, towerMounted, refreshTowerUi, gearSheet, invSheet, invPatch, mountInv, unmountInv, newInv, equipMsg, heroHit, closeLoot, keysLabel, AFF_NAME, showChest } from './game/view.js';
+import { viewTower, mountTower, unmountTower, towerMounted, refreshTowerUi, gearSheet, invSheet, invPatch, mountInv, unmountInv, newInv, equipMsg, heroHit, statVal, closeLoot, keysLabel, AFF_NAME, showChest } from './game/view.js';
 import { ensureBounty, bountyStatus, bountyShort, bountyText, claimBounty } from './game/bounty.js';
 import { monthRecap, recapMonths, drawRecap, summaryText, monthName, monthLabel } from './recap.js';
 
@@ -858,9 +858,10 @@ const act = {
   // forge, lock and equip only re-render the sheet and patch the tab behind it, never the canvas
   forge: (el) => {
     const g = ensureGame(state), slot = el.dataset.slot, a = el.dataset.fa, i = Number(el.dataset.i) || 0, pick = el.dataset.id ? findItem(g, Number(el.dataset.id)) : null, it = pick || g.gear[slot], c = forgeCost(g, a, it), was = it && it.aff[i] && it.aff[i].id;
+    const ws = pick ? it && it.slot : slot, SN = { weapon: ['atk', 'Attack'], armour: ['hp', 'Health'], boots: ['spd', 'Speed'] }[ws] || [], worn = it && g.gear[ws] === it, v0 = worn && SN[0] ? statVal(g, SN[0], g.stats[SN[0]]) : '';   // shows what the forge did to the hero
     if (forge(g, slot, a, i, Math.random, pick)) {
       const n = it, msg = a === 'reroll' ? `Rerolled ${AFF_NAME[was]} into ${AFF_NAME[n.aff[i].id]}.` : a === 'add' ? `Added ${AFF_NAME[n.aff[n.aff.length - 1].id]}.` : a === 'upgrade' ? `Upgraded to ${n.rarity}, added ${AFF_NAME[n.aff[n.aff.length - 1].id]}.` : `Tempered to level ${n.lvl}.`;
-      sheet.msg = `${msg} Spent ${c} Focus.`; save(state); refreshTowerUi(state); renderSheet();
+      const v1 = v0 ? statVal(g, SN[0], g.stats[SN[0]]) : ''; sheet.msg = `${msg}${v0 && v1 !== v0 ? ` ${SN[1]} ${v0} → ${v1}.` : ''} Spent ${c} Focus.`; save(state); refreshTowerUi(state); renderSheet();
     }
   },
   // inventory: taps patch the open sheet in place (invPatch), so the preview, the battle canvas and the stats behind it are never rebuilt

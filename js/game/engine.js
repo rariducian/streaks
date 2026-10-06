@@ -37,7 +37,7 @@ export const CONFIG = {
     swift: { base: 0.06, w: 1.5 }, guard: { base: 0.06, w: 1.5, cap: 0.5 }, ward: { base: 0.12, w: 0.8 }, train: { base: 0.05, w: 1, cap: 0.30 }
   },
   maxAffix: { common: 1, rare: 2, epic: 3 },
-  forge: { reroll: 40, add: 100, upgrade: 160, temper: 30, tierGrow: 1.35, temperGrow: 1.15, temperPct: 0.05 },   // Focus. cost = base x 1.35^tier x (1 - Ancestral forge); Temper also x 1.15^level
+  forge: { reroll: 40, add: 100, upgrade: 160, temper: 30, tierGrow: 1.35, temperGrow: 1.15, temperPct: 0.2 },   // Focus. cost = base x 1.35^tier x (1 - Ancestral forge); Temper also x 1.15^level
   trait: { armour: 0.015, armourMin: 0.3, arcane: 0.3, regen: 0.015, burn: 0.3, chill: 0.25, swiftHits: 2 },   // armour: flat cut per hit as a share of enemy HP, never below armourMin of the hit. regen: enemy HP/s. burn: x enemy attack per second, ignores Guard
   eliteHp: 1.15, eliteAtk: 1.1,   // every 5th floor that is not a boss. Higher values stalled daily trainers for up to 2 weeks in tools/tower-sim.mjs
   talents: {   // souls. cost = ceil(cost x grow^level). per = effect per level
@@ -362,7 +362,7 @@ export function forge(g, slot, action, i = 0, rng = Math.random, item = null) {
   const it = item || g.gear[slot]; if (forgeBlock(it, action, i)) return false;
   const c = forgeCost(g, action, it); if (g.focus < c) return false;
   g.focus -= c;
-  if (action === 'reroll') { const rest = it.aff.filter((_, k) => k !== i); it.aff[i] = rollAffix(it.tier, rest, rng); }
+  if (action === 'reroll') { it.aff[i] = rollAffix(it.tier, it.aff, rng); }   // never rolls a trait the item already has, the rerolled one included
   else if (action === 'add') { it.aff.push(rollAffix(it.tier, it.aff, rng)); it.added = true; }
   else if (action === 'upgrade') { it.rarity = RARITIES[RARITIES.indexOf(it.rarity) + 1]; it.aff.push(rollAffix(it.tier, it.aff, rng)); it.bonus = baseBonus(it); it.look = lookOf(it); }
   else { it.lvl = (it.lvl || 0) + 1; it.bonus = baseBonus(it); }
