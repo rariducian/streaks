@@ -5,7 +5,7 @@ import { traitsOf, isElite } from './scene.js';
 export const CONFIG = {
   sessionSweat: 100, minimumSweat: 40, streakStep: 0.05, streakCap: 10, dailyLimit: 2, secondHalf: 0.5,
   levelUpSweat: 300, pbSweat: 100,
-  focusBase: 30, focusPerHour: 5, focusCap: 80,
+  focusBase: 60, focusPerHour: 10, focusCap: 160, bossFocus: 0.2,   // Focus per fast; a boss kill pays ceil(floor x bossFocus)
   atk: { base: 5, per: 2, cost: 20, grow: 1.038 }, hp: { base: 50, per: 15, cost: 20, grow: 1.038 },
   spd: { base: 1, per: 0.04, max: 3, cost: 25, grow: 1.05 },
   milestoneEvery: 10, milestoneMult: 1.5,   // every 10 levels of Attack or Health multiplies that stat (idle-game milestone), so late floors keep falling
@@ -14,16 +14,16 @@ export const CONFIG = {
   walk: 2, rest: 10, gritStep: 0.0007, gritMax: 0.25, bossTimer: 30, maxIter: 20000,   // grit compounds per failed try (10 s each) and hits the +25% cap in about 53 min. Boss enrage: not dead by bossTimer seconds is a loss. See tools/tower-sim.mjs
   offlineBaseH: 24, offlineMaxH: 24, staminaPer: 0.10,   // 'endurance' is the save key for Stamina: +10% Sweat from sessions per level
   focusUp: {
-    endurance: { max: 5, cost: 30, grow: 1.4, capStep: 2 }, precision: { max: 20, cost: 30, grow: 1.25 }, luck: { max: 10, cost: 40, grow: 1.3, capStep: 5 },
+    endurance: { max: 5, cost: 30, grow: 1.12, capStep: 2 }, precision: { max: 20, cost: 30, grow: 1.06 }, luck: { max: 10, cost: 40, grow: 1.12, capStep: 5 },
     // New ones: per = effect per level, need = the boss floor that unlocks it (bossBest), 0 = always open. Listed in unlock order, the Focus section shows them in this order
-    iron: { max: 10, cost: 20, grow: 1.25, per: 0.02, need: 0 }, hands: { max: 10, cost: 20, grow: 1.25, per: 0.02, need: 0 },
-    warlord: { max: 10, cost: 25, grow: 1.25, per: 0.03, need: 10 }, breath: { max: 5, cost: 30, grow: 1.3, per: 0.01, need: 20, capStep: 2 },
-    thorn: { max: 10, cost: 30, grow: 1.25, per: 0.02, need: 30 }, mastery: { max: 10, cost: 40, grow: 1.25, per: 0.03, need: 40, cap: 0.75 },
-    sense: { max: 5, cost: 40, grow: 1.35, per: 0.04, need: 50, capStep: 2, cap: 0.6 }, ring: { max: 3, cost: 50, grow: 1.6, per: 1, need: 60, capStep: 1 },
-    overkill: { max: 10, cost: 40, grow: 1.25, per: 0.05, need: 70 }, dilation: { max: 4, cost: 60, grow: 1.4, per: 5, need: 80, capStep: 1 },
-    ascendant: { max: 3, cost: 100, grow: 1.8, per: 1, need: 100, capStep: 1 },
-    fortify: { max: 10, cost: 20, grow: 1.2, per: 0.03, need: 90 }, keen: { max: 10, cost: 20, grow: 1.2, per: 0.03, need: 110 },   // +Health, +Attack
-    gilded: { max: 5, cost: 80, grow: 1.35, per: 0.05, need: 130, cap: 1 }, echo: { max: 5, cost: 100, grow: 1.4, per: 0.03, need: 150, cap: 0.3 }   // chance of an extra key per paid session, of a second boss drop
+    iron: { max: 10, cost: 20, grow: 1.12, per: 0.02, need: 0 }, hands: { max: 10, cost: 20, grow: 1.12, per: 0.02, need: 0 },
+    warlord: { max: 10, cost: 25, grow: 1.12, per: 0.03, need: 10 }, breath: { max: 5, cost: 30, grow: 1.12, per: 0.01, need: 20, capStep: 2 },
+    thorn: { max: 10, cost: 30, grow: 1.12, per: 0.02, need: 30 }, mastery: { max: 10, cost: 40, grow: 1.12, per: 0.03, need: 40, cap: 0.75 },
+    sense: { max: 5, cost: 40, grow: 1.12, per: 0.04, need: 50, capStep: 2, cap: 0.6 }, ring: { max: 3, cost: 50, grow: 1.12, per: 1, need: 60, capStep: 1 },
+    overkill: { max: 10, cost: 40, grow: 1.12, per: 0.05, need: 70 }, dilation: { max: 4, cost: 60, grow: 1.12, per: 5, need: 80, capStep: 1 },
+    ascendant: { max: 3, cost: 100, grow: 1.12, per: 1, need: 100, capStep: 1 },
+    fortify: { max: 10, cost: 20, grow: 1.12, per: 0.03, need: 90 }, keen: { max: 10, cost: 20, grow: 1.12, per: 0.03, need: 110 },   // +Health, +Attack
+    gilded: { max: 5, cost: 80, grow: 1.12, per: 0.05, need: 130, cap: 1 }, echo: { max: 5, cost: 100, grow: 1.12, per: 0.03, need: 150, cap: 0.3 }   // chance of an extra key per paid session, of a second boss drop
   },
   // Level caps rise with lifetime bossBest: each milestone adds capStep levels to every upgrade (default: capPct of the base max, rounded up). `cap` = most the effect can ever give, so levels past it are never offered
   capBosses: [30, 60, 90, 120, 150], capPct: 0.5,
@@ -37,7 +37,7 @@ export const CONFIG = {
     swift: { base: 0.06, w: 1.5 }, guard: { base: 0.06, w: 1.5, cap: 0.5 }, ward: { base: 0.12, w: 0.8 }, train: { base: 0.05, w: 1, cap: 0.30 }
   },
   maxAffix: { common: 1, rare: 2, epic: 3 },
-  forge: { reroll: 40, add: 100, upgrade: 160, temper: 30, tierGrow: 1.35, temperGrow: 1.15, temperPct: 0.2 },   // Focus. cost = base x 1.35^tier x (1 - Ancestral forge); Temper also x 1.15^level
+  forge: { reroll: 20, add: 50, upgrade: 80, temper: 15, tierGrow: 1.1, temperGrow: 1.15, temperPct: 0.2 },   // Focus. cost = base x 1.1^tier x (1 - Ancestral forge); Temper also x 1.15^level
   trait: { armour: 0.015, armourMin: 0.3, arcane: 0.3, regen: 0.015, burn: 0.3, chill: 0.25, swiftHits: 2 },   // armour: flat cut per hit as a share of enemy HP, never below armourMin of the hit. regen: enemy HP/s. burn: x enemy attack per second, ignores Guard
   eliteHp: 1.15, eliteAtk: 1.1,   // every 5th floor that is not a boss. Higher values stalled daily trainers for up to 2 weeks in tools/tower-sim.mjs
   talents: {   // souls. cost = ceil(cost x grow^level). per = effect per level
@@ -388,7 +388,7 @@ const bossDrop = (g, n, rng) => { const up = fl(g, 'sense') > 0 && rng() < flFx(
 // Runs the sim floor by floor for `seconds`. g.prog holds time already spent on the current attempt. opts.stopAt: stop on reaching that floor, leaving the rest of the time unspent.
 // A boss floor takes a key on the first try. Retries of the same boss are free (g.keyFor). With no key the hero waits: no tries, no grit, time just passes (g.waiting).
 export function advance(g, seconds, rng = Math.random, opts = {}) {
-  const sum = { floors: 0, bosses: 0, drops: [], unlocked: [], capsUp: false }, stop = opts.stopAt || Infinity;
+  const sum = { floors: 0, bosses: 0, focus: 0, drops: [], unlocked: [], capsUp: false }, stop = opts.stopAt || Infinity;
   let left = Math.max(0, seconds || 0), guard = CONFIG.maxIter;
   while (left > 1e-9 && guard-- > 0) {
     if (g.floor >= stop) break;
@@ -401,6 +401,7 @@ export function advance(g, seconds, rng = Math.random, opts = {}) {
     g.grit = 0; g.keyFor = 0; sum.floors++;
     if (f.enemy.boss) {
       sum.bosses++; sum.drops.push(bossDrop(g, n, rng));
+      const fb = Math.ceil(n * CONFIG.bossFocus); g.focus += fb; sum.focus += fb;   // a boss kill pays a little Focus, so income keeps pace with the tower
       if (fl(g, 'echo') > 0 && rng() < flFx(g, 'echo')) sum.drops.push(bossDrop(g, n, rng));   // Echo: a second item
       if (n > g.bossBest) { const c0 = capLevel(g); for (const k of focusIds) { const d = CONFIG.focusUp[k].need || 0; if (d > g.bossBest && d <= n) sum.unlocked.push(k); } g.bossBest = n; if (capLevel(g) > c0) sum.capsUp = true; }   // a new record: ids it unlocks, and whether it crossed a cap milestone
     }
@@ -430,7 +431,7 @@ export function offlineCatchUp(state, now = Date.now(), rng = Math.random) {
   if (secs < 60 || (!sum.floors && !sum.bosses && !newDoor)) return null;
   const rank = { epic: 3, rare: 2, common: 1 };
   const best = sum.drops.slice().sort((a, b) => rank[b.rarity] - rank[a.rarity] || power(b) - power(a))[0] || null;
-  g.away = { seconds: Math.round(secs), capped: el > cap, floors: sum.floors, bosses: sum.bosses, best: best && { slot: best.slot, tier: best.tier, rarity: best.rarity, bonus: best.bonus, power: power(best), equipped: best.equipped }, to: g.floor, waiting: g.waiting, unlocked: sum.unlocked, capsUp: sum.capsUp };
+  g.away = { seconds: Math.round(secs), capped: el > cap, floors: sum.floors, bosses: sum.bosses, focus: sum.focus, best: best && { slot: best.slot, tier: best.tier, rarity: best.rarity, bonus: best.bonus, power: power(best), equipped: best.equipped }, to: g.floor, waiting: g.waiting, unlocked: sum.unlocked, capsUp: sum.capsUp };
   return g.away;
 }
 
