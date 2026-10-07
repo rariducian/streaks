@@ -118,9 +118,10 @@ export const MOVE_NOUNS = {
 };
 
 export const DAYS = [
-  { id: 'upper', name: 'Upper', moves: ['hpush', 'row', 'vpush', 'core', 'calf'] },
-  { id: 'legs', name: 'Legs', moves: ['squat', 'hamcurl', 'calf', 'vpush', 'core'] },
-  { id: 'full', name: 'Full body', moves: ['hinge', 'hpush', 'row', 'squat', 'hamcurl'] },
+  // 6 moves a day, emphasis first. sessionPlan trains the ones with the fewest recent sets (pickMoves), so every move gets a fair share at any length
+  { id: 'upper', name: 'Upper', moves: ['hpush', 'row', 'vpush', 'core', 'calf', 'hinge'] },
+  { id: 'legs', name: 'Legs', moves: ['squat', 'hamcurl', 'calf', 'hinge', 'core', 'vpush'] },
+  { id: 'full', name: 'Full body', moves: ['hinge', 'hpush', 'row', 'squat', 'hamcurl', 'core'] },
 ];
 
 // Names for every day id ever stored, so old sessions (push, legs, pull) still display.

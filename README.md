@@ -8,6 +8,9 @@ Open the site in Safari, tap Share, then Add to Home Screen.
 
 Tests: `node --test tests/`
 
+## Which moves a session trains
+Each day (Upper, Legs, Full body) lists 6 moves, main ones first. A session trains 3, 4 or 5 of them (10, 15, 20 min; 2 on a minimum day). It picks the ones with the fewest sets in your last 9 sessions, plus half a set per place down the list so the day keeps its theme (`pickMoves` in `js/logic.js`). A left and right pair counts as one set. So a move a short session leaves out, or a per-side move that takes two minutes a set, comes back next time. Every move gets a fair share at any session length.
+
 ## Rest days
 In Settings, pick up to 2 weekdays as planned rest days (`settings.restDays`, Mon = 0). A rest day with no training keeps the training streak, like a free streak freeze: it does not grow the streak and costs no freeze. Training on one counts as normal. Each change is stored by the date it took effect (`settings.restHistory`), so changing your rest days later never rewrites past streaks. The heatmap and week dots show rest days in their own colour. Fasting streaks ignore rest days.
 
