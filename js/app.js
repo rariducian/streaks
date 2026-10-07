@@ -487,7 +487,7 @@ function sheetHtml() {
       ${snaps.length ? `<h4 style="margin:18px 0 6px">Restore from snapshot</h4>${snaps.map((x) => `<button class="field" style="width:100%;text-align:left" data-act="restoreSnap" data-key="${esc(x.key)}"><label>${esc(x.date)}${x.label === 'daily' ? '' : ` &middot; ${esc(x.label)}`}</label><span class="muted">${esc(fmtSize(x.size || 0))}</span></button>`).join('')}` : ''}
       <p class="small muted" style="text-align:center;margin-top:14px">All data stays on this phone.</p>`;
   } else if (sheet.type === 'gear') {
-    const r = gearSheet(ensureGame(state), sheet.slot, sheet.msg, sheet.id ?? null); title = r.title; body = r.body;
+    const r = gearSheet(ensureGame(state), sheet.slot, sheet.msg, sheet.id ?? null, sheet.hl || ''); sheet.hl = ''; title = r.title; body = r.body;
   } else if (sheet.type === 'inv') {
     const r = invSheet(ensureGame(state), sheet); title = r.title; body = r.body;
   } else if (sheet.type === 'trend') {
@@ -861,7 +861,9 @@ const act = {
     const ws = pick ? it && it.slot : slot, SN = { weapon: ['atk', 'Attack'], armour: ['hp', 'Health'], boots: ['spd', 'Speed'] }[ws] || [], worn = it && g.gear[ws] === it, v0 = worn && SN[0] ? statVal(g, SN[0], g.stats[SN[0]]) : '';   // shows what the forge did to the hero
     if (forge(g, slot, a, i, Math.random, pick)) {
       const n = it, msg = a === 'reroll' ? `Rerolled ${AFF_NAME[was]} into ${AFF_NAME[n.aff[i].id]}.` : a === 'add' ? `Added ${AFF_NAME[n.aff[n.aff.length - 1].id]}.` : a === 'upgrade' ? `Upgraded to ${n.rarity}, added ${AFF_NAME[n.aff[n.aff.length - 1].id]}.` : `Tempered to level ${n.lvl}.`;
-      const v1 = v0 ? statVal(g, SN[0], g.stats[SN[0]]) : ''; sheet.msg = `${msg}${v0 && v1 !== v0 ? ` ${SN[1]} ${v0} → ${v1}.` : ''} Spent ${c} Focus.`; save(state); refreshTowerUi(state); renderSheet();
+      const v1 = v0 ? statVal(g, SN[0], g.stats[SN[0]]) : ''; sheet.msg = `${msg}${v0 && v1 !== v0 ? ` ${SN[1]} ${v0} → ${v1}.` : ''} Spent ${c} Focus.`; sheet.hl = a === 'reroll' ? `aff${i}` : a;
+      if (sheet.back) sheet.back.msg = sheet.msg;   // the inventory shows it too on the way back
+      save(state); refreshTowerUi(state); renderSheet(); toast(msg);
     }
   },
   // inventory: taps patch the open sheet in place (invPatch), so the preview, the battle canvas and the stats behind it are never rebuilt
@@ -898,7 +900,7 @@ const changes = {
     if (w === 'calib') s.calib.max = n; else s.logs[w === 'log' ? s.idx : s.idx - 1] = n;
     el.value = n;
   },
-  invSort: (el) => { if (sheet && sheet.type === 'inv') { sheet.sort = el.value; invPatch(state, sheet); } },
+  invSort: (el) => { if (sheet && sheet.type === 'inv') { sheet.sort = el.value; sheet.order = null; invPatch(state, sheet); } },
   fastMin: (el) => commit(withSettings(state, { fastMinHours: Number(el.value) })),
   fastGoal: (el) => commit(withSettings(state, { fastGoalHours: Number(el.value) })),
   workSec: (el) => commit(withSettings(state, { workSec: Number(el.value) })),

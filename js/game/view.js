@@ -53,22 +53,23 @@ export function gearHtml(g) {
     <button class="btn sm soft tw-buy" data-act="invSheet" aria-label="Open inventory: ${g.stash.length + SLOTS.filter((s) => g.gear[s]).length} items, try them on the hero">Inventory</button></div>`;
 }
 // The gear bottom sheet (app.js shows it): equipped item, forge, lock and the stash for one slot. msg is a short result line read out by VoiceOver.
-export function gearSheet(g, slot, msg = '', id = null) {
+// hl names the row the last forge changed ('aff0'..., 'add', 'upgrade', 'temper'); it flashes once.
+export function gearSheet(g, slot, msg = '', id = null, hl = '') {
   const it = id != null ? findItem(g, id) : g.gear[slot], cur = g.gear[slot], st = g.stash.filter((x) => x.slot === slot && x !== it), fb = (c, off, label, txt) => `<button class="btn sm tw-buy tnum" ${c} aria-label="${esc(label)}" ${off ? 'disabled' : ''}>${txt}</button>`;
   const act = (a, extra = '') => `data-act="forge" data-slot="${slot}" data-fa="${a}" ${id != null ? `data-id="${id}" ` : ''}${extra}`;
-  const cost = (a) => forgeCost(g, a, it);
+  const cost = (a) => forgeCost(g, a, it), row = (k) => `tw-row${hl === k ? ' tw-flash' : ''}`;
   const fbtn = (a, i, label, blockTxt) => { const bl = forgeBlock(it, a, i); return fb(act(a, `data-i="${i}"`), !!bl || g.focus < cost(a), bl ? `${label}: ${bl}` : g.focus < cost(a) ? `${label} costs ${cost(a)} Focus, you have ${Math.floor(g.focus)}` : `${label} for ${cost(a)} Focus`, bl ? esc(blockTxt || bl) : btnTxt(false, 'focus', cost(a))); };
   let body = `<p class="tw-fh tnum" aria-label="Focus ${Math.floor(g.focus)}">Focus <b><span aria-hidden="true">&#9670;</span> ${fmt(g.focus)}</b></p><p class="small muted tw-msg" role="status" aria-live="polite">${esc(msg)}</p>`;
   if (!it) body += `<div class="tw-card"><div class="tw-row"><div class="tw-sub">Empty slot. Bosses drop gear.${st.length ? ' Equip one from the stash below.' : ''}</div></div></div>`;
   else {
     if (it !== cur) body += `<p class="small muted">This item is in the stash. Your stats change only once you equip it.</p>`;
-    const g2 = it.aff.map((a, i) => `<div class="tw-row"><div class="tw-main"><div class="tw-nm">${AFF_NAME[a.id]} <span class="tw-lv">${pct(a.v)}</span></div><div class="tw-sub">${esc(affDesc(a))}</div></div>${fbtn('reroll', i, `Reroll ${AFF_NAME[a.id]}`)}</div>`).join('');
-    body += `<div class="tw-card"><div class="tw-row"><div class="tw-main"><div class="tw-nm" style="color:${RCOL[it.rarity]}">${esc(itemName(it))} ${SLOT_NAME[slot].toLowerCase()}</div><div class="tw-sub">+${pct(it.bonus)} ${STAT_NAME[SLOT_STAT[slot]]} &middot; Power ${pw(it)}</div></div>
+    const g2 = it.aff.map((a, i) => `<div class="${row(`aff${i}`)}"><div class="tw-main"><div class="tw-nm">${AFF_NAME[a.id]} <span class="tw-lv">${pct(a.v)}</span></div><div class="tw-sub">${esc(affDesc(a))}</div></div>${fbtn('reroll', i, `Reroll ${AFF_NAME[a.id]}`)}</div>`).join('');
+    body += `<div class="tw-card"><div class="${row(hl === 'upgrade' || hl === 'temper' ? hl : 'item')}"><div class="tw-main"><div class="tw-nm" style="color:${RCOL[it.rarity]}">${esc(itemName(it))} ${SLOT_NAME[slot].toLowerCase()}</div><div class="tw-sub">+${pct(it.bonus)} ${STAT_NAME[SLOT_STAT[slot]]} &middot; Power ${pw(it)}</div></div>
       <button class="btn sm soft tw-buy" data-act="lockItem" data-id="${it.id}" aria-pressed="${it.lock}" aria-label="${it.lock ? 'Unlock' : 'Lock'} this ${SLOT_NAME[slot].toLowerCase()}. Locked items are never replaced by drops">${it.lock ? 'Locked' : 'Lock'}</button></div>${g2 || '<div class="tw-row"><div class="tw-sub">No affixes yet.</div></div>'}</div>
       <h4 class="tw-h4">Forge</h4><div class="tw-card">
-      <div class="tw-row"><div class="tw-main"><div class="tw-nm">Add an affix</div><div class="tw-sub">One extra, once per item (up to ${CONFIG.maxAffix[it.rarity] + 1})</div></div>${fbtn('add', 0, 'Add an affix', it.added ? 'Done' : 'Full')}</div>
-      <div class="tw-row"><div class="tw-main"><div class="tw-nm">Upgrade rarity</div><div class="tw-sub">${it.rarity === 'epic' ? 'Already epic' : `To ${it.rarity === 'common' ? 'rare' : 'epic'}: bigger bonus and a new affix`}</div></div>${fbtn('upgrade', 0, 'Upgrade rarity', 'Max')}</div>
-      <div class="tw-row"><div class="tw-main"><div class="tw-nm">Temper <span class="tw-lv">Lv ${it.lvl || 0}</span></div><div class="tw-sub">+${Math.round(CONFIG.forge.temperPct * 100)}% base bonus each time, no limit</div></div>${fbtn('temper', 0, 'Temper')}</div></div>`;
+      <div class="${row('add')}"><div class="tw-main"><div class="tw-nm">Add an affix</div><div class="tw-sub">One extra, once per item (up to ${CONFIG.maxAffix[it.rarity] + 1})</div></div>${fbtn('add', 0, 'Add an affix', it.added ? 'Done' : 'Full')}</div>
+      <div class="${row('upgrade')}"><div class="tw-main"><div class="tw-nm">Upgrade rarity</div><div class="tw-sub">${it.rarity === 'epic' ? 'Already epic' : `To ${it.rarity === 'common' ? 'rare' : 'epic'}: bigger bonus and a new affix`}</div></div>${fbtn('upgrade', 0, 'Upgrade rarity', 'Max')}</div>
+      <div class="${row('temper')}"><div class="tw-main"><div class="tw-nm">Temper <span class="tw-lv">Lv ${it.lvl || 0}</span></div><div class="tw-sub">+${Math.round(CONFIG.forge.temperPct * 100)}% base bonus each time, no limit</div></div>${fbtn('temper', 0, 'Temper')}</div></div>`;
   }
   body += `<h4 class="tw-h4">Stash <span class="tw-lv">${g.stash.length}/${stashMax(g)} in all</span></h4><div class="tw-card">` + (st.length ? st.map((x) => { const d = Math.round((power(x) - power(cur)) * 10) / 10;
     return `<div class="tw-row"><div class="tw-main"><div class="tw-nm" style="color:${RCOL[x.rarity]}">${esc(itemName(x))} <span class="tw-lv">Power ${pw(x)}${cur ? ` (${d >= 0 ? '+' : ''}${d})` : ''}</span></div><div class="tw-chips">${chips(x) || '<span class="tw-sub">No affixes</span>'}</div></div>
@@ -82,7 +83,7 @@ const lookKey = (it) => (it && (it.look || lookOf(it))) || '';
 export const kindOf = (it) => KIND[lookKey(it).split('.')[1]] || SLOT_NAME[it.slot].toLowerCase();
 export const tileLabel = (it, equipped) => `Tier ${it.tier} ${it.rarity} ${kindOf(it)}${setName(it) ? `, ${setName(it)} set piece` : ''}${it.lvl ? ` +${it.lvl}` : ''}, power ${pw(it)}${equipped ? ', equipped' : ''}${it.lock ? ', locked' : ''}`;
 export const INV_TABS = [['all', 'All'], ['weapon', 'Weapon'], ['armour', 'Armour'], ['boots', 'Boots']], INV_SORTS = [['power', 'Power'], ['rarity', 'Rarity'], ['newest', 'Newest']];
-export const newInv = (slot = 'all') => ({ type: 'inv', slot, sort: 'power', sel: null, msg: '' });
+export const newInv = (slot = 'all') => ({ type: 'inv', slot, sort: 'power', sel: null, msg: '', order: null });
 const LOCK_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm2 0h6V8a3 3 0 0 0-6 0z"/></svg>';
 const SHORT = { 'short sword': 'Short sword', longsword: 'Longsword', axe: 'Axe', spear: 'Spear', greatsword: 'Greatsword', tunic: 'Tunic', 'leather vest': 'Vest', chainmail: 'Chainmail', 'plate armour': 'Plate', 'caped plate armour': 'Caped plate', 'cloth boots': 'Cloth', 'leather boots': 'Leather', 'iron greaves': 'Greaves' };
 const icon = (look) => { const c = iconInfo(look); return `<img class="inv-ic" alt="" width="${c.w * c.s}" height="${c.h * c.s}" src="${c.url}">`; };
@@ -115,7 +116,10 @@ export function invActs(g, ui) {
     { k: 'invForge', txt: 'Forge', off: false, label: `Forge ${nm}: open the forge for this item` }];
 }
 const actHtml = (a) => `<button class="btn sm ${a.k === 'invEquip' ? '' : 'soft'}" data-act="${a.k}" data-inv-act="${a.k}" ${a.pressed !== undefined ? `aria-pressed="${a.pressed}"` : ''} aria-label="${esc(a.label)}" ${a.off ? 'disabled' : ''}>${a.txt}</button>`;
-const gridHtml = (g, ui) => { const l = inventory(g, ui.slot, ui.sort); return l.length ? l.map((x) => tileHtml(x, x.it.id === ui.sel)).join('') : `<p class="inv-empty">No ${ui.slot === 'all' ? '' : SLOT_NAME[ui.slot].toLowerCase() + ' '}items yet. Bosses drop gear.</p>`; };
+// The grid order is fixed when the sheet opens or the sort changes, so forging or equipping never moves a tile. New items go last.
+const invList = (g, ui) => { const l = inventory(g, ui.slot, ui.sort); if (!ui.order) ui.order = inventory(g, 'all', ui.sort).map((x) => x.it.id);
+  const ix = (x) => { const i = ui.order.indexOf(x.it.id); return i < 0 ? Infinity : i; }; return l.sort((a, b) => ix(a) - ix(b)); };
+const gridHtml = (g, ui) => { const l = invList(g, ui); return l.length ? l.map((x) => tileHtml(x, x.it.id === ui.sel)).join('') : `<p class="inv-empty">No ${ui.slot === 'all' ? '' : SLOT_NAME[ui.slot].toLowerCase() + ' '}items yet. Bosses drop gear.</p>`; };
 const prevLabel = (g, ui) => { const it = ui.sel != null ? findItem(g, ui.sel) : null, w = SLOTS.map((s) => (it && it.slot === s ? it : g.gear[s])).filter(Boolean); return `Your hero wearing ${w.length ? w.map((x) => `${x.rarity} ${kindOf(x)}`).join(', ') : 'no gear'}${it && g.gear[it.slot] !== it ? `. Trying on ${kindOf(it)}` : ''}`; };
 export function invSheet(g, ui) {
   const it = ui.sel != null ? findItem(g, ui.sel) : null; if (!it) ui.sel = null;
@@ -134,7 +138,7 @@ export function invPatch(state, ui) {
   const fo = document.activeElement, fid = fo && root.contains(fo) ? fo.dataset.id : null;
   for (const b of document.querySelectorAll('.inv-tab')) { const on = b.dataset.slot === ui.slot; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); const n = slotCount(g, b.dataset.slot), nm = INV_TABS.find((t) => t[0] === b.dataset.slot)[1], lb = `${nm}, ${n} item${n === 1 ? '' : 's'}`; if (b.getAttribute('aria-label') !== lb) b.setAttribute('aria-label', lb); }
   const sort = document.querySelector('[data-change="invSort"]'); if (sort && sort.value !== ui.sort) sort.value = ui.sort;
-  const gh = gridHtml(g, ui), key = JSON.stringify([ui.slot, ui.sort, ui.sel, inventory(g, ui.slot, ui.sort).map((x) => [x.it.id, x.it.lock, x.equipped, x.it.rarity, x.it.lvl])]);
+  const gh = gridHtml(g, ui), key = JSON.stringify([ui.slot, ui.sort, ui.sel, invList(g, ui).map((x) => [x.it.id, x.it.lock, x.equipped, x.it.rarity, x.it.lvl])]);
   if (root.dataset.key !== key) { root.dataset.key = key; root.innerHTML = gh; if (fid) { const t = root.querySelector(`[data-id="${fid}"]`); if (t) t.focus({ preventScroll: true }); } }
   const cmp = document.getElementById('inv-cmp'), ch = cmpHtml(g, ui); if (cmp && cmp.innerHTML !== ch) cmp.innerHTML = ch;
   const acts = invActs(g, ui); document.querySelectorAll('[data-inv-act]').forEach((b, i) => { const a = acts[i]; if (b.textContent !== a.txt) b.textContent = a.txt; b.disabled = a.off; b.setAttribute('aria-label', a.label); if (a.pressed !== undefined) b.setAttribute('aria-pressed', a.pressed); });
