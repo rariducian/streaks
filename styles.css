@@ -544,3 +544,16 @@ body.fv-lock{overflow:hidden}
 .rc-prev{border-radius:14px;overflow:hidden;background:var(--bg);aspect-ratio:1080/1350}
 .rc-btns{display:flex;gap:10px;margin-top:12px}.rc-btns .btn{flex:1;padding:13px 10px}
 .recap .btn.soft{background:var(--bg)}
+
+/* pets */
+.pt-ic{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+.pt-box{flex:none;width:52px;height:48px;border-radius:12px;background:#343a5a;display:flex;align-items:center;justify-content:center}
+.tw-pet .tw-prog{margin:6px 0 4px}
+.tw-petnote{border-bottom:0}
+.pt-hatch{text-align:center}
+.pt-big{display:inline-flex;padding:20px 32px;border-radius:22px;background:#343a5a;margin-top:6px}
+.pt-pop{display:block;line-height:0}
+.pt-msg{font-size:1.118rem;font-weight:750;margin:14px 0 4px}
+.pt-btns{display:flex;gap:10px;justify-content:center;margin-top:16px}.pt-btns .btn{min-width:120px}
+@keyframes ptpop{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.15);opacity:1}100%{transform:scale(1)}}
+@media (prefers-reduced-motion:no-preference){.pt-pop{animation:ptpop .5s cubic-bezier(.2,.8,.2,1)}}

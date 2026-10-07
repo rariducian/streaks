@@ -9,8 +9,8 @@ import {
 import { load, save, exportJSON, importJSON, normalise, STORAGE_KEY } from './store.js';
 import { migrate } from './logic.js';
 import { ensurePersist, idbStore, listSnaps, snapshot, restoreOffer, importConfirm, restoreConfirm, backupCardText, fmtSize } from './backup.js';
-import { CONFIG, ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, forge, forgeCost, toggleLock, equip, findItem, atDoor, fightFloor, readyBoss } from './game/engine.js';
-import { viewTower, mountTower, unmountTower, towerMounted, refreshTowerUi, gearSheet, invSheet, invPatch, mountInv, unmountInv, newInv, equipMsg, heroHit, statVal, closeLoot, keysLabel, AFF_NAME, showChest } from './game/view.js';
+import { CONFIG, ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, hatchEgg, setPet, petName, forge, forgeCost, toggleLock, equip, findItem, atDoor, fightFloor, readyBoss } from './game/engine.js';
+import { viewTower, mountTower, unmountTower, towerMounted, refreshTowerUi, gearSheet, petSheet, invSheet, invPatch, mountInv, unmountInv, newInv, equipMsg, heroHit, statVal, closeLoot, keysLabel, AFF_NAME, showChest } from './game/view.js';
 import { ensureBounty, bountyStatus, bountyShort, bountyText, claimBounty } from './game/bounty.js';
 import { monthRecap, recapMonths, drawRecap, summaryText, monthName, monthLabel } from './recap.js';
 
@@ -85,6 +85,7 @@ function commit(next) {
   else { askPersist(); snapshot(bak, state, new Date()).then((w) => { if (w && sheet && sheet.type === 'settings') refreshSnaps(); }); }
   render();
 }
+const petNews = (r) => r && (r.eggs || r.ready) ? [r.eggs ? 'An egg was laid.' : '', r.ready ? 'An egg is ready to hatch.' : ''].filter(Boolean).join(' ') : '';   // what a sync did for pets
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2400); }
 
 /* iOS-style action sheet. ask({ title, message, confirmLabel, destructive }) -> Promise<boolean>. Escape or scrim tap = cancel. */
@@ -488,6 +489,8 @@ function sheetHtml() {
       <p class="small muted" style="text-align:center;margin-top:14px">All data stays on this phone.</p>`;
   } else if (sheet.type === 'gear') {
     const r = gearSheet(ensureGame(state), sheet.slot, sheet.msg, sheet.id ?? null, sheet.hl || ''); sheet.hl = ''; title = r.title; body = r.body;
+  } else if (sheet.type === 'pet') {
+    const r = petSheet(ensureGame(state), sheet); title = r.title; body = r.body;
   } else if (sheet.type === 'inv') {
     const r = invSheet(ensureGame(state), sheet); title = r.title; body = r.body;
   } else if (sheet.type === 'trend') {
@@ -528,7 +531,7 @@ function render() {
   if (tab === 'today' || tab === 'tower') { try { if (ensureBounty(state, todayStr())) save(state); } catch (e) { /* ignore */ } }   // this week's bounty is picked on first look
   const v = $('#view');
   const live = tab === 'tower' && liveBoss; liveBoss = 0;
-  if (tab === 'tower') { syncRewards(state); if (!live || !readyBoss(state, live)) { offlineCatchUp(state); } }
+  if (tab === 'tower') { const pn = petNews(syncRewards(state)); if (pn) { save(state); toast(pn); } if (!live || !readyBoss(state, live)) { offlineCatchUp(state); } }
   v.innerHTML = tab === 'fast' ? viewFast() : tab === 'progress' ? viewProgress() : tab === 'fitness' ? viewFitness() : tab === 'tower' ? viewTower(state) : viewToday();
   renderSheet();
   if (tab === 'progress') mountRecap();
@@ -711,7 +714,7 @@ function finishRun(completed) {
     const r = syncRewards(state), g = ensureGame(state), last = state.sessions[state.sessions.length - 1];
     sweat = (g.paid['s:' + (last && last.id)] || 0) + (res.events || []).reduce((n, e) => n + (g.paid['e:' + e.id] || 0), 0);
     keys = r.keys; fight = fightFloor(g); pieces = r.pieces || [];
-    save(state);
+    save(state); const pn = petNews(r); if (pn) toast(pn);
   } catch (e) { sweat = 0; keys = 0; fight = 0; pieces = []; }
   s.summary = { sweat, keys, fight, pieces, minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })), totals: sessionTotals(sets) };
   s.phase = 'summary'; renderSession();
@@ -785,6 +788,9 @@ const act = {
   fightBoss: () => { unlockAudio(); const g = ensureGame(state), b = fightFloor(g); liveBoss = b; tab = 'tower'; sheet = null; closeSession(); window.scrollTo(0, 0); },
   lootEquip: (el) => { const g = ensureGame(state), it = findItem(g, Number(el.dataset.id)); if (!it) return; const m = equipMsg(g, it); if (equip(g, it.id)) { save(state); refreshTowerUi(state); closeLoot(); toast(m); } },
   lootKeep: () => closeLoot(),
+  hatchEgg: () => { const r = hatchEgg(ensureGame(state)); if (!r) return; save(state); refreshTowerUi(state); sheet = { type: 'pet', ...r }; renderSheet(); },
+  setPet: (el) => { if (setPet(ensureGame(state), el.dataset.id)) { save(state); refreshTowerUi(state); toast(`${petName(el.dataset.id)} is now your active pet.`); } },
+  makeActive: (el) => { if (setPet(ensureGame(state), el.dataset.id)) { save(state); refreshTowerUi(state); renderSheet(); toast(`${petName(el.dataset.id)} is now your active pet.`); } },
   growYes: () => commit(acceptGrowth(state)),
   growNo: () => commit(dismissGrowth(state, new Date())),
   gotBar: () => commit(setPullupBar(state, true)),
