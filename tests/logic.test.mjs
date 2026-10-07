@@ -90,7 +90,28 @@ test('sessionPlan: counts per minutes, blocks, per-side pairs', () => {
   s.settings.sessionMinutes = 20;
   const p20 = L.sessionPlan(s);
   assert.equal(p20.moves.length, 5); assert.equal(p20.slots.length, 20);
-  assert.deepEqual(p20.moves.map((m) => m.moveId), DAYS[0].moves);
+  assert.deepEqual(p20.moves.map((m) => m.moveId), DAYS[0].moves.slice(0, 5));   // no history: the day's first moves
+});
+
+const done = (s, plan) => { s.sessions.push({ id: 'b' + s.sessions.length, date: '2026-01-01', sets: plan.slots.map((x) => ({ moveId: x.moveId, side: x.side, reps: 8 })) }); s.rotationIndex = (s.rotationIndex + 1) % DAYS.length; };
+test('pickMoves: the moves with the fewest recent sets, a per-side pair is one set, day order kept', () => {
+  const s = fresh(), day = DAYS[0];   // hpush, row, vpush, core, calf, hinge
+  assert.deepEqual(L.pickMoves(s, day, 3), ['hpush', 'row', 'vpush']);
+  s.sessions.push({ sets: [{ moveId: 'hpush' }, { moveId: 'hpush' }, { moveId: 'row' }, { moveId: 'row' }, { moveId: 'vpush', side: 'L' }, { moveId: 'vpush', side: 'R' }] });
+  // sets + 0.5 x place: hpush 2, row 2.5, vpush 1 (the pair) + 1 = 2, core 1.5, calf 2, hinge 2.5. Ties go to the earlier move
+  assert.deepEqual(L.pickMoves(s, day, 3), ['hpush', 'vpush', 'core']);
+  // only the last BALANCE_SESSIONS sessions count
+  for (let i = 0; i < L.BALANCE_SESSIONS; i++) s.sessions.push({ sets: [] });
+  assert.deepEqual(L.pickMoves(s, day, 3), ['hpush', 'row', 'vpush']);
+});
+test('sessionPlan: every move gets a fair share of sets at 10, 15 and 20 minutes', () => {
+  for (const min of [10, 15, 20]) for (const lv of [0, 2]) {
+    const s = fresh(); s.settings.sessionMinutes = min;
+    for (const id of Object.keys(MOVES)) s.moves[id] = { ...s.moves[id], level: Math.min(lv, MOVES[id].levels.length - 1), calibrated: true, target: 8 };
+    const n = {}; for (let i = 0; i < 36; i++) { const p = L.sessionPlan(s); if (i >= 9) for (const x of p.slots) if (x.side !== 'R') n[x.moveId] = (n[x.moveId] || 0) + 1; done(s, p); }
+    const v = Object.keys(MOVES).map((k) => (n[k] || 0) / 9);
+    assert.ok(Math.min(...v) >= 0.7 * Math.max(...v), `${min} min, level ${lv}: ${JSON.stringify(n)}`);   // was core 0 at 10 min
+  }
 });
 
 test('sessionPlan: a block that does not fit is skipped for one that fits; stops when none fits', () => {

@@ -80,11 +80,21 @@ function effectiveLevel(state, moveId) {
   return usable.filter((i) => i < ms.level).pop() ?? 0;
 }
 
+export const BALANCE_SESSIONS = 9;   // three rotations
+export const DAY_BIAS = 0.5;   // sets a move is worth per place down the day list, so the day keeps its main moves
+// The day's moves to train today: the `count` with the fewest sets in the last BALANCE_SESSIONS sessions (a left and right pair is one set), ties in day order.
+// So a move that a short session keeps leaving out (core at 10 min, a per-side move eating two minutes a set) comes back next time. Kept in day order.
+export function pickMoves(state, day, count) {
+  const n = {}; for (const ss of (state.sessions || []).slice(-BALANCE_SESSIONS)) for (const x of ss.sets || []) if (x.side !== 'R') n[x.moveId] = (n[x.moveId] || 0) + 1;
+  const keep = new Set(day.moves.map((id, i) => ({ id, i, c: n[id] || 0 })).sort((a, b) => a.c + DAY_BIAS * a.i - (b.c + DAY_BIAS * b.i) || a.i - b.i).slice(0, count).map((x) => x.id));
+  return day.moves.filter((id) => keep.has(id));
+}
+
 export function sessionPlan(state, { minimum = false } = {}) {
   const day = currentDay(state);
   const wanted = minimum ? MINIMUM_MINUTES : state.settings.sessionMinutes;
   const count = minimum ? 2 : wanted >= 20 ? 5 : wanted >= 15 ? 4 : 3;
-  const ids = day.moves.slice(0, count);
+  const ids = pickMoves(state, day, count);
   const work = workOf(state);
   const moves = ids.map((moveId) => {
     const m = MOVES[moveId];
