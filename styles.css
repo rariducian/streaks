@@ -456,6 +456,9 @@ body.fv-lock{overflow:hidden}
 .tw-h4{margin:18px 2px 8px;font-size:0.882rem;font-weight:700}
 .tw-fh{margin:0 0 4px;display:flex;justify-content:space-between;font-size:0.882rem;color:var(--muted)}.tw-fh b{color:var(--purple-text)}
 .tw-msg{min-height:1.2em;margin:0 0 8px}
+.tw-flash{animation:twflash 1.4s ease-out;border-radius:12px}
+@keyframes twflash{0%,30%{background:color-mix(in srgb,var(--green) 28%,transparent)}100%{background:transparent}}
+@media (prefers-reduced-motion:reduce){.tw-flash{animation:none;background:color-mix(in srgb,var(--green) 16%,transparent)}}
 .tw-btns{display:flex;flex-direction:column;gap:6px;flex:none}.tw-btns .btn{min-width:78px}
 
 /* inventory sheet: preview and compare on top, tabs and sort, then a scrolling grid of 3 tiles across (fits 360 px) */
