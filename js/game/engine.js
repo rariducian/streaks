@@ -47,6 +47,16 @@ export const CONFIG = {
   },
   keyCap: 5, sessionKeys: 1, levelUpKeys: 1, welcomeKeys: 3, migrateKeys: 1, fightAhead: 2,   // Boss Keys: a paid session and a level-up pay keys, history pays at most welcomeKeys, old saves start with migrateKeys. fightAhead: floors before a boss that still offer the live fight
   ascendMinFloor: 20,
+  // Pets: an egg every `every` sessions, warmed by fasting hours (`need` to hatch). Only the active pet grows (fast hours and sessions) and only it gives its bonus: base + per x (Lv - 1). fx uses the set-bonus keys, plus 'focus' (Focus from fasts)
+  pets: {
+    every: 10, need: 16, welcomeEggs: 2, maxEggs: 3, maxLv: 10, sessionXp: 4, dupeXp: 60, overflowXp: 30,
+    species: {
+      fox: { name: 'Ember Fox', fx: 'atk', base: 0.03, per: 0.01, txt: '+X% Attack' }, tortoise: { name: 'Shell Tortoise', fx: 'hp', base: 0.03, per: 0.01, txt: '+X% Health' },
+      hawk: { name: 'Gale Hawk', fx: 'spd', base: 0.02, per: 0.006, txt: '+X% Speed' }, cat: { name: 'Lucky Cat', fx: 'crit', base: 0.02, per: 0.005, txt: '+X% crit chance' },
+      toad: { name: 'Moss Toad', fx: 'lifesteal', base: 0.02, per: 0.005, txt: '+X% Lifesteal' }, beetle: { name: 'Gold Beetle', fx: 'train', base: 0.03, per: 0.01, txt: '+X% Sweat from sessions' },
+      owl: { name: 'Night Owl', fx: 'focus', base: 0.05, per: 0.02, txt: '+X% Focus from fasts' }, snail: { name: 'Clock Snail', fx: 'timer', base: 0.05, per: 0.02, txt: '+X% boss timer' }
+    }
+  },
   restedBonus: 0.10,   // 'Rested': the next session after a passed planned rest day pays +10% Sweat (added to Stamina and the like). One-off, never stacks
   welcomeSets: 3,   // history pays at most this many set pieces on the first sync, like welcomeKeys
   bounty: { daysMin: 3, daysMax: 5, fullMin: 2, fullMax: 4, fastMin: 2, fastMax: 4, weeks: 4, keys: 1, minRarity: 'rare' },   // Weekly bounty: targets scale to the last `weeks` weeks (average + 1). The chest gives a rare-or-better item at the current tier and `keys` boss key
@@ -72,6 +82,7 @@ export const RARITIES = ['common', 'rare', 'epic'];
 export const LOOKS = { weapon: ['sword', 'longsword', 'axe', 'spear', 'greatsword'], armour: ['tunic', 'vest', 'chain', 'plate', 'cape'], boots: ['cloth', 'leather', 'iron'] };
 const LOOK_STEP = { weapon: 2, armour: 2, boots: 3 };
 export const lookOf = (it) => { const l = LOOKS[it.slot]; return `${it.slot}.${l[Math.min(l.length - 1, Math.floor((Math.max(1, it.tier) - 1) / LOOK_STEP[it.slot]))]}.${it.rarity}`; };
+export const PET_IDS = Object.keys(CONFIG.pets.species);
 export const AFFIXES = Object.keys(CONFIG.affix);
 export const TALENTS = Object.keys(CONFIG.talents);
 
@@ -96,10 +107,20 @@ export function ensureGame(state) {
   if (!Array.isArray(g.stash)) g.stash = [];
   for (const s of SLOTS) if (g.gear[s]) tidy(g, g.gear[s]);
   g.stash = g.stash.filter((it) => it && SLOTS.includes(it.slot)); for (const it of g.stash) tidy(g, it);
+  tidyPets(g);
   if (!Array.isArray(g.drops)) g.drops = [];
   if (g.away === undefined) g.away = null;
   const b = g.bounty; if (b !== undefined && !(b && typeof b === 'object' && typeof b.week === 'string' && ['days', 'best', 'level', 'full', 'fast'].includes(b.kind) && Number.isFinite(b.target))) delete g.bounty; else if (b) b.claimed = !!b.claimed;
   return g;
+}
+// Pets: bad or missing fields go back to defaults, unknown species are dropped, levels are clamped, the active pet must be owned, eggs are objects and at most maxEggs
+function tidyPets(g) {
+  const C = CONFIG.pets, p = g.pets = g.pets && typeof g.pets === 'object' && !Array.isArray(g.pets) ? g.pets : {};
+  p.init = p.init === true; p.n = Number.isFinite(p.n) && p.n > 0 ? Math.floor(p.n) : 0;
+  const o = p.owned && typeof p.owned === 'object' && !Array.isArray(p.owned) ? p.owned : {}; p.owned = {};
+  for (const id of PET_IDS) { const x = o[id]; if (!x || typeof x !== 'object') continue; const lv = Number.isFinite(x.lv) ? Math.max(1, Math.min(C.maxLv, Math.floor(x.lv))) : 1, xp = Number.isFinite(x.xp) && x.xp > 0 ? Math.floor(x.xp) : 0; p.owned[id] = { lv, xp: lv >= C.maxLv ? 0 : Math.min(xp, petNeed(lv) - 1) }; }
+  p.eggs = (Array.isArray(p.eggs) ? p.eggs : []).filter((e) => e && typeof e === 'object' && !Array.isArray(e)).slice(0, C.maxEggs).map((e) => ({ id: Number.isFinite(e.id) ? e.id : ++g.seq, warm: Number.isFinite(e.warm) ? Math.max(0, Math.min(C.need, Math.floor(e.warm))) : 0 }));
+  if (typeof p.active !== 'string' || !p.owned[p.active]) p.active = null;
 }
 function num2(o, k) { if (!Number.isFinite(o[k])) o[k] = 0; }
 // Old items have no affixes, level, lock, id or look. Fill them in without touching bonus.
@@ -122,7 +143,7 @@ const gilded = (g, id) => idRoll(id) < flFx(g, 'gilded');
 // Pays every session, event and fast not yet in game.paid. Safe to call any number of times.
 // Boss Keys ride the same way ('ks:' per session, 'ke:' per level-up), so old saves with Sweat already paid still get theirs. The first sync is the welcome grant: history pays at most welcomeKeys.
 export function syncRewards(state, now = Date.now(), rng = Math.random) {
-  const g = ensureGame(state), out = { sweat: 0, focus: 0, tokens: 0, items: 0, keys: 0, pieces: [] }, rest = restFn(state.settings), stam = 1 + CONFIG.staminaPer * (g.focusUp.endurance || 0) + trainBonus(g) + talFx(g, 'prospector');
+  const g = ensureGame(state), out = { sweat: 0, focus: 0, tokens: 0, items: 0, keys: 0, pieces: [], eggs: 0, ready: 0, petLv: 0 }, rest = restFn(state.settings), stam = 1 + CONFIG.staminaPer * (g.focusUp.endurance || 0) + trainBonus(g) + talFx(g, 'prospector');
   const sessions = (state.sessions || []).map((s, i) => ({ s, i })).sort((a, b) => (a.s.date || '').localeCompare(b.s.date || '') || String(a.s.startedAt || '').localeCompare(String(b.s.startedAt || '')) || a.i - b.i);
   const dates = trainingDates(state), streakAt = new Map(), seen = new Map(); let kp = 0, prevDate = null;
   for (const { s } of sessions) {
@@ -158,11 +179,37 @@ export function syncRewards(state, now = Date.now(), rng = Math.random) {
   for (const f of state.fasts || []) {
     const key = 'f:' + f.id;
     if (!f.end || g.paid[key] !== undefined) continue;
-    const amt = focusForFast((new Date(f.end) - new Date(f.start)) / 3.6e6, minH);
+    const amt = Math.round(focusForFast((new Date(f.end) - new Date(f.start)) / 3.6e6, minH) * (1 + (petFx(g).focus || 0)));   // Night Owl: more Focus
     if (!amt) continue;   // short fast: not marked, so editing it longer can still pay
     g.paid[key] = amt; g.focus += amt; out.focus += amt; out.items++;
   }
+  petPass(g, state, sessions, out);
   return out;
+}
+// Pets. Every session ('pe:id') and completed fast ('pw:id') counts once. The first pass is history: all of it is marked paid with no warmth or XP, and you get a few starter eggs (the first one ready).
+function petPass(g, state, sessions, out) {
+  const p = g.pets, C = CONFIG.pets, was = new Set(p.eggs.filter(eggReady).map((e) => e.id)), fasts = (state.fasts || []).filter((f) => f.end);
+  if (!p.init) {
+    for (const { s } of sessions) g.paid['pe:' + s.id] = 0;
+    for (const f of fasts) g.paid['pw:' + f.id] = 0;
+    const n = Math.min(Math.floor(sessions.length / C.every), C.welcomeEggs);
+    for (let i = 0; i < n; i++) p.eggs.push({ id: ++g.seq, warm: i ? 0 : C.need });
+    p.n = sessions.length; p.init = true; out.eggs += n;
+  } else {
+    const act = activePet(g), grow = (xp) => { if (act && xp > 0) out.petLv += addPetXp(g, act, xp); };
+    for (const { s } of sessions) {
+      if (g.paid['pe:' + s.id] !== undefined) continue;
+      g.paid['pe:' + s.id] = 1; grow(C.sessionXp);
+      if (++p.n % C.every) continue;
+      if (p.eggs.length < C.maxEggs) { p.eggs.push({ id: ++g.seq, warm: 0 }); out.eggs++; } else grow(C.overflowXp);   // a full nest: the egg becomes XP
+    }
+    for (const f of fasts) {
+      if (g.paid['pw:' + f.id] !== undefined) continue;
+      const h = Math.max(0, Math.floor((new Date(f.end) - new Date(f.start)) / 3.6e6 + 1e-9)); g.paid['pw:' + f.id] = h; grow(h);
+      let w = h; for (const e of p.eggs) { if (w <= 0) break; if (eggReady(e)) continue; const t = Math.min(w, C.need - e.warm); e.warm += t; w -= t; }   // warmth fills the first egg that is not ready, the rest carries on
+    }
+  }
+  out.ready = p.eggs.filter((e) => eggReady(e) && !was.has(e.id)).length;
 }
 
 // ---------- costs and stats ----------
@@ -191,7 +238,7 @@ const talFx = (g, k) => tal(g, k) * CONFIG.talents[k].per;
 // ---------- affixes ----------
 // Sum of one affix over the three equipped items, capped where the config says so.
 export function affixTotal(g, id) {   // Second Breath and Thornmail count like gear
-  let t = (setFx(g)[id] || 0) + (id === 'lifesteal' ? flFx(g, 'breath') : id === 'thorns' ? flFx(g, 'thorn') : 0); for (const s of SLOTS) { const it = g.gear && g.gear[s]; if (it) for (const a of it.aff || []) if (a.id === id) t += a.v; }
+  let t = (bonusFx(g)[id] || 0) + (id === 'lifesteal' ? flFx(g, 'breath') : id === 'thorns' ? flFx(g, 'thorn') : 0); for (const s of SLOTS) { const it = g.gear && g.gear[s]; if (it) for (const a of it.aff || []) if (a.id === id) t += a.v; }
   const c = CONFIG.affix[id].cap; return c ? Math.min(c, t) : t;
 }
 export const trainBonus = (g) => affixTotal(g, 'train');
@@ -221,8 +268,36 @@ export function setFx(g, swap = null) {
 // For the Gear section and the compare panel: every set with a worn piece, its count and which bonuses are on.
 export const activeSets = (g, swap = null) => { const c = setCounts(g, swap); return Object.keys(c).map((id) => ({ id, name: CONFIG.sets[id].name, n: c[id], two: c[id] >= 2, three: c[id] >= 3 })); };
 
+// ---------- pets ----------
+export const petNeed = (lv) => 10 * lv;   // XP to go from lv to lv + 1
+export const petValue = (id, lv) => { const d = CONFIG.pets.species[id]; return d.base + d.per * (lv - 1); };
+export const petName = (id) => (CONFIG.pets.species[id] || {}).name || '';
+export const petText = (id, lv) => CONFIG.pets.species[id].txt.replace('X', String(Math.round(petValue(id, lv) * 1000) / 10));
+export const activePet = (g) => { const p = g.pets; return p && p.active && p.owned && p.owned[p.active] ? p.active : null; };
+// The active pet's bonus as { [key]: value }, same keys as setFx (plus 'focus'). Empty with no pet.
+export function petFx(g) { const id = activePet(g); return id ? { [CONFIG.pets.species[id].fx]: petValue(id, g.pets.owned[id].lv) } : NOFX; }
+// Set bonuses and the active pet added up: what stats, affixes and the boss timer read. `swap` is an item tried on (set count only).
+export function bonusFx(g, swap = null) { const s = setFx(g, swap), p = petFx(g); if (p === NOFX) return s; const t = { ...s }; for (const k in p) t[k] = (t[k] || 0) + p[k]; return t; }
+// Adds XP to an owned pet, levelling up as it goes (no XP at max level). Returns the levels gained.
+export function addPetXp(g, id, xp) {
+  const o = g.pets.owned[id], M = CONFIG.pets.maxLv; if (!o) return 0; const lv0 = o.lv;
+  while (xp > 0 && o.lv < M) { const take = Math.min(xp, petNeed(o.lv) - o.xp); o.xp += take; xp -= take; if (o.xp >= petNeed(o.lv)) { o.lv++; o.xp = 0; } }
+  if (o.lv >= M) o.xp = 0; return o.lv - lv0;
+}
+export const eggReady = (e) => e.warm >= CONFIG.pets.need;
+export const sessionsToEgg = (g) => CONFIG.pets.every - (g.pets.n % CONFIG.pets.every);
+// Hatches the first ready egg. A species you do not own yet, else (all owned) a random owned one that gains dupeXp. The first pet is made active. Returns { species, dupe } or null.
+export function hatchEgg(g, rng = Math.random) {
+  const p = g.pets, C = CONFIG.pets, i = p.eggs.findIndex(eggReady); if (i < 0) return null;
+  p.eggs.splice(i, 1);
+  const fresh = PET_IDS.filter((id) => !p.owned[id]), pool = fresh.length ? fresh : PET_IDS, species = pool[Math.min(pool.length - 1, Math.floor(rng() * pool.length))];
+  if (fresh.length) { p.owned[species] = { lv: 1, xp: 0 }; if (!p.active) p.active = species; return { species, dupe: false }; }
+  return { species, dupe: true, up: addPetXp(g, species, C.dupeXp) };
+}
+export function setPet(g, id) { if (!g.pets.owned[id]) return false; g.pets.active = id; return true; }
+
 export function heroStats(g) {
-  const L = g.stats, ms = (lv) => Math.pow(CONFIG.milestoneMult, Math.floor(lv / CONFIG.milestoneEvery)), F = setFx(g);
+  const L = g.stats, ms = (lv) => Math.pow(CONFIG.milestoneMult, Math.floor(lv / CONFIG.milestoneEvery)), F = bonusFx(g);
   return {
     atk: (CONFIG.atk.base + CONFIG.atk.per * L.atk) * ms(L.atk) * gearMult(g, 'weapon') * (1 + talFx(g, 'might')) * (1 + (F.atk || 0)) * (1 + flFx(g, 'keen')),
     hp: (CONFIG.hp.base + CONFIG.hp.per * L.hp) * ms(L.hp) * gearMult(g, 'armour') * (1 + talFx(g, 'vigour')) * (1 + (F.hp || 0)) * (1 + flFx(g, 'fortify')),
@@ -235,7 +310,7 @@ export function enemy(n) {
   const b = isBoss(n), el = isElite(n);
   return { floor: n, boss: b, elite: el, hp: CONFIG.enemyHp * Math.pow(CONFIG.enemyHpGrow, n - 1) * (b ? CONFIG.bossHp : 1) * (el ? CONFIG.eliteHp : 1), atk: CONFIG.enemyAtk * Math.pow(CONFIG.enemyAtkGrow, n - 1) * (b ? CONFIG.bossAtk : 1) * (el ? CONFIG.eliteAtk : 1) };
 }
-export const bossTimer = (g) => (CONFIG.bossTimer + talFx(g, 'wind') + flFx(g, 'dilation')) * (1 + (setFx(g).timer || 0));
+export const bossTimer = (g) => (CONFIG.bossTimer + talFx(g, 'wind') + flFx(g, 'dilation')) * (1 + (bonusFx(g).timer || 0));
 // Closed form fight. Grit is temporary attack from failed tries on the current floor (capped). A boss also needs killing inside the boss timer.
 // Affixes and zone traits fold into two numbers: dps (damage to the enemy per second, net of armour and regen) and net (damage to the hero per second, net of Lifesteal).
 export function fight(g, n) {

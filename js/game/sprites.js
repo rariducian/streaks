@@ -681,3 +681,40 @@ export function getSprite(kind, frame = 'idleA', elite = false) {
   }
   return cache.get(k);
 }
+
+/* ---- pets: small raw maps (12 wide, no outline), padded by 1 px and finished like the units: bevel, ink outline, light from the top left. Facing right, like the hero.
+   Two idle frames: B squashes the body 1 px (the legs lose a row). Kept apart from MAPS so the unit tests, which loop over every unit and its six frames, never see them. ---- */
+export const PET_SPECIES = ['fox', 'tortoise', 'hawk', 'cat', 'toad', 'beetle', 'owl', 'snail'];
+const PET_RAW = {
+  fox: ['........X..X', '........XXXX', '......XXXXXX', 'c.....XXXkXX', 'XX..XXXXXXXk', 'XXXXXXXXXccc', '.XXXXXXXXXcc', '..XXXXXXXXX.', '...XX..XX...', '...XX..XX...'],
+  tortoise: ['...ggggg....', '..ggygggg...', '.gggggyggCCC', '.ggygggggCkC', '.gggggggggCC', '.gggggggggg.', '..gggggggg..', '..CC....CC..', '..CC....CC..'],
+  hawk: ['....aaaa....', '...aaaaaa...', '...aaakaaoo.', '...aaaaaao..', '..aaacccaa..', '.aaaaccccaa.', 'aaaaaccccaa.', '.aaaaacccaa.', '..aaaccca...', '....o..o....'],
+  cat: ['...b...b....', '...bbbbb....', '...bkbkb....', '...bbrbb....', '..rrrrrrr...', '..bbbobbb.b.', '.bbbbbbbbbbb', '.bbbbbbbbbb.', '..bb....bb..'],
+  toad: ['.....gg.gg..', '.....ck.ck..', '..gggyggggyg', '.gggggggggkk', '.ggCCCCCCggg', '.gCCCCCCCCgg', '.ggCCCCCCgg.', '..ggggggggg.', '.ggg....ggg.'],
+  beetle: ['...ooooo....', '..oPoooooo..', '.oPPooooooNN', '.oooooooooNN', '.oooooPoooo.', '..oooooooo..', '..k.k..k.k..', '.k..k..k..k.'],
+  owl: ['...p....p...', '...pp..pp...', '...pppppp...', '..ppoopoopp.', '..ppkopkopp.', '...ppPPpp...', '..ppvvvvpp..', '.pppvvvvppp.', '.pppvvvvppp.', '...oo..oo...'],
+  snail: ['..........k..k', '...oooo...g..g', '..oPccco...gg.', '.oPcckcco..ggg', '.occckkco.gggg', '.occcccco.ggg.', '..ooooooOggg..', 'yyyyyyyyyyyy..', '.gggggggggg...'],
+  egg: ['...bb...', '..bbbb..', '.bcbbbb.', '.bcbbBb.', 'bbbbbbbb', 'bbBbbbbb', 'bbbbbbBb', 'bbbBbbbb', '.bbbbbb.', '..bbbb..'],
+  crack: ['...bb...', '..bbbk..', '.bcbbkb.', '.bcbkbb.', 'bbbbkkbb', 'bbBbbkkb', 'bbbbbkbb', 'bbbBbbbb', '.bbbbbb.', '..bbbb..']
+};
+export const PET_MAPS = {}, PET_META = {};
+for (const [k, raw] of Object.entries(PET_RAW)) {
+  const w = raw[0].length, a = [Array(w + 2).fill('.'), ...raw.map((r) => ['.', ...r, '.']), Array(w + 2).fill('.')], b = bob(a, a.length - 3);
+  PET_MAPS[k] = { idleA: finish(a), idleB: finish(b) }; PET_META[k] = { w: w + 2, h: a.length, px: Math.floor((w + 2) / 2) };
+}
+const petCache = new Map(), PFR = { 0: 'idleA', 1: 'idleB', a: 'idleA', b: 'idleB', idleA: 'idleA', idleB: 'idleB' };
+// A species (or 'egg' / 'crack') as a cached canvas, same shape as getSprite: { img, flash, w, h, px, pad, top }. px is the feet pivot column. frame 0 or 1 (idle A or B).
+export function getPet(kind, frame = 0) {
+  const f = PFR[frame] || 'idleA', k = kind + ':' + f;
+  if (!petCache.has(k)) {
+    const m = PET_MAPS[kind][f], img = mapToCanvas(m);
+    petCache.set(k, { img, flash: silhouette(img), w: img.width, h: img.height, px: PET_META[kind].px, pad: 0, top: Math.max(0, m.findIndex((r) => /[^.]/.test(r))) });
+  }
+  return petCache.get(k);
+}
+// Icon for the UI, like iconInfo: { url (data URL), w, h, s (scale to show it at) }. The url is empty without a DOM.
+const petIcons = new Map();
+export function petIcon(kind) {
+  if (!petIcons.has(kind)) { const m = PET_MAPS[kind] && PET_MAPS[kind].idleA, no = typeof document === 'undefined'; petIcons.set(kind, !m ? { url: '', w: 0, h: 0, s: 3 } : { url: no ? '' : mapToCanvas(m).toDataURL(), w: m[0].length, h: m.length, s: 3 }); }
+  return petIcons.get(kind);
+}

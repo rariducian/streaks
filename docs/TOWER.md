@@ -167,6 +167,29 @@ Refund all talents is free, once per ascension (comes back when you ascend).
 - **Souls:** spent in the Soul tree.
 - **Optional:** the token waits until you choose to spend it.
 
+## Pets
+Eggs come from sessions, fasting hours hatch them, and one active pet grows and gives a small bonus. All numbers are in `CONFIG.pets`. Save: `game.pets = { init, n, eggs: [{ id, warm }], owned: { species: { lv, xp } }, active }`, tidied by `ensureGame`.
+- **Eggs:** every 10 sessions (`every`, any session, counted once each in `pets.n`) lays an egg. You hold at most 3 (`maxEggs`). Over that, the egg becomes `overflowXp` (30) for the active pet instead.
+- **Warmth:** each completed fast (it has an end) adds floor(hours) to the first egg that is not ready. Warmth past `need` (16) carries to the next egg, and is lost if every egg is ready. A fast still running never counts, and a finished one counts once.
+- **Hatch:** a tap (`hatchEgg`) on a ready egg (warm >= 16). The species is rolled from those you do not own yet. With all 8 owned it rolls any of them and gives that pet `dupeXp` (60) instead. The first pet ever is made active. The hatch sheet shows it with a pop-in (none under reduced motion) and a Make active button.
+- **XP:** only the active pet grows: +floor(hours) per completed fast and +4 (`sessionXp`) per session. Level L needs 10 x L XP to reach L + 1. Max level 10 (`maxLv`), where XP stops. With no active pet, XP is lost.
+- **Effect:** only the active pet counts. value = base + per x (Lv - 1). It uses the set-bonus keys and is added to them by `bonusFx(g)` (set bonuses plus `petFx(g)`), which `heroStats`, `affixTotal` and `bossTimer` read. `setFx` and the compare panel's set logic are unchanged. Owl's `focus` is read in `syncRewards`: Focus per fast = round(normal Focus x (1 + owl)). Lifesteal and Training stay under their usual caps. With no pet, every number is as before.
+| Pet | Effect | Lv 1 | Per level | Lv 10 |
+|---|---|---|---|---|
+| Ember Fox | Attack | +3% | +1% | +12% |
+| Shell Tortoise | Health | +3% | +1% | +12% |
+| Gale Hawk | Speed | +2% | +0.6% | +7.4% |
+| Lucky Cat | Crit chance | +2% | +0.5% | +6.5% |
+| Moss Toad | Lifesteal | +2% | +0.5% | +6.5% |
+| Gold Beetle | Sweat from sessions | +3% | +1% | +12% |
+| Night Owl | Focus from fasts | +5% | +2% | +23% |
+| Clock Snail | Boss timer | +5% | +2% | +23% |
+- **Sync:** a pets pass at the end of `syncRewards`, keyed in `game.paid` by `pe:<session id>` and `pw:<fast id>`, so every item counts once and re-syncing changes nothing. It returns `eggs` (laid), `ready` (became ready) and `petLv` (levels gained). The app toasts "An egg was laid." and "An egg is ready to hatch."
+- **First pass (history):** every existing session and completed fast is marked paid with no warmth or XP. You get min(floor(sessions / 10), 2) eggs (`welcomeEggs`), the first one already ready. `pets.n` starts at the session count, so the next egg comes on the usual schedule.
+- **Pets card:** between Hero and Gear (`#tw-pets`): the active pet (sprite, level, XP bar, effect), each egg (a bar of warm hours, or a Hatch button), other owned pets (Choose) and a line on how eggs work with "Next egg in N sessions." The How you earn card has an eggs line.
+- **Battle:** the active pet stands on the ground just behind and left of the hero (HERO x - 16), with a 2 frame idle bob and a small hop as the enemy falls. Reduced motion shows one still frame. The canvas label names it.
+- **Art:** `PET_MAPS` in sprites.js (8 species plus `egg` and `crack`, 12 to 14 wide, two idle frames each, outlined in ink, light from the top left), kept apart from `MAPS` so the unit tests are unaffected. `getPet(kind, frame)` gives a cached canvas, `petIcon(kind)` a data URL for the UI.
+
 ## Session link
 The end-of-session summary shows the Sweat that session paid (session plus level-up and PB bonuses), with an "Open Tower" button that closes the session and opens the Tower tab.
 

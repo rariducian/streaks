@@ -1,6 +1,6 @@
 // Tower tab: HTML view plus the battle canvas. Isometric stone floor, chibi units, drawn at art resolution then scaled up crisp.
-import { CONFIG, SLOTS, SLOT_STAT, TALENTS, SET_IDS, ensureGame, heroStats, fight, advance, offlineCatchUp, statCost, focusCost, focusMax, focusNextCap, nextCapFloor, capLevel, focusOpen, keyCap, bossTimer, canAscend, soulsFor, isBoss, atDoor, power, forgeCost, forgeBlock, stashMax, soulsLeft, talentCost, canRespec, lookOf, inventory, compareItem, findItem, setCounts, activeSets, tierNow } from './engine.js';
-import { getSprite, getHero, iconInfo, PAL, hexA, SET_COLOR } from './sprites.js';
+import { CONFIG, SLOTS, SLOT_STAT, TALENTS, SET_IDS, ensureGame, heroStats, fight, advance, offlineCatchUp, statCost, focusCost, focusMax, focusNextCap, nextCapFloor, capLevel, focusOpen, keyCap, bossTimer, canAscend, soulsFor, isBoss, atDoor, power, forgeCost, forgeBlock, stashMax, soulsLeft, talentCost, canRespec, lookOf, inventory, compareItem, findItem, setCounts, activeSets, tierNow, PET_IDS, petName, petText, petNeed, activePet, eggReady, sessionsToEgg } from './engine.js';
+import { getSprite, getHero, getPet, petIcon, iconInfo, PAL, hexA, SET_COLOR } from './sprites.js';
 import { ensureBounty, bountyStatus, bountyText } from './bounty.js';
 import { todayStr, restedPending } from '../logic.js';
 import { AW, PAD, AH, HERO, FOE, mk, sceneFor, zoneOf, enemyKind, enemyName, isElite, traitLine, glow, hash } from './scene.js';
@@ -244,6 +244,36 @@ export function bountyHtml(state) {
     <div class="tw-sub">Chest: a rare or better item (tier ${tierNow(g)}) and 1 boss key.</div></div>
     <button class="btn sm tw-buy" data-act="claimBounty" aria-label="${esc(st.claimed ? 'Bounty already claimed' : st.claimable ? `Claim the bounty chest: ${bountyText(b)}` : `Claim, not finished yet: ${st.now} of ${st.target}`)}" ${st.claimable ? '' : 'disabled'}>${st.claimed ? 'Claimed' : 'Claim'}</button></div>`;
 }
+/* ---------- pets ---------- */
+const petImg = (id, sc = 0) => { const c = petIcon(id), k = sc || c.s; return `<img class="pt-ic" alt="" width="${c.w * k}" height="${c.h * k}" src="${c.url}">`; };
+const aOrAn = (nm) => (/^[aeiou]/i.test(nm) ? 'An' : 'A') + ' ' + nm;
+const barHtml = (label, now, max) => `<div class="tw-prog" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="${max}" aria-valuenow="${now}"><i style="width:${Math.round(100 * now / max)}%"></i></div>`;
+function petRow(g, id, on) {
+  const o = g.pets.owned[id], nm = petName(id), max = o.lv >= CONFIG.pets.maxLv, fx = petText(id, o.lv);
+  const bar = on ? (max ? barHtml(`${nm} experience: max level`, 1, 1) : barHtml(`${nm} experience: ${o.xp} of ${petNeed(o.lv)}`, o.xp, petNeed(o.lv))) : '';
+  return `<div class="tw-row tw-pet" role="group" aria-label="${esc(`${nm}, level ${o.lv}${max ? ', max level' : ''}${on ? ', active' : ''}. ${fx}`)}"><span class="pt-box" aria-hidden="true">${petImg(id)}</span>
+    <div class="tw-main"><div class="tw-nm">${esc(nm)} <span class="tw-lv">Lv ${o.lv}${max ? ' (max)' : ''}</span></div>${bar}<div class="tw-sub">${esc(fx)}${on && !max ? ` &middot; ${o.xp}/${petNeed(o.lv)} XP` : ''}</div></div>
+    <button class="btn sm ${on ? 'soft ' : ''}tw-buy" data-act="setPet" data-id="${id}" aria-label="${on ? `${esc(nm)} is your active pet` : `Make ${esc(nm)} your active pet`}" ${on ? 'disabled' : ''}>${on ? 'Active' : 'Choose'}</button></div>`;
+}
+function eggRow(e) {
+  const C = CONFIG.pets, ready = eggReady(e), t = ready ? 'An egg is ready to hatch' : `Egg: ${e.warm} of ${C.need} fasting hours`;
+  return `<div class="tw-row tw-pet" role="group" aria-label="${esc(t)}"><span class="pt-box" aria-hidden="true">${petImg(ready ? 'crack' : 'egg')}</span>
+    <div class="tw-main"><div class="tw-nm">${ready ? 'Egg: ready to hatch' : esc(t)}</div>${ready ? '' : barHtml(`Egg warmth: ${e.warm} of ${C.need} fasting hours`, e.warm, C.need)}</div>
+    ${ready ? '<button class="btn sm tw-buy" data-act="hatchEgg" aria-label="Hatch the egg that is ready">Hatch</button>' : ''}</div>`;
+}
+export function petsHtml(g) {
+  const p = g.pets, C = CONFIG.pets, act = activePet(g), n = sessionsToEgg(g);
+  const rows = (act ? [petRow(g, act, true)] : []).concat(p.eggs.map(eggRow), PET_IDS.filter((id) => p.owned[id] && id !== act).map((id) => petRow(g, id, false)));
+  return rows.join('') + `<div class="tw-row tw-petnote"><div class="tw-sub">Every ${C.every} sessions lays an egg. Fasting hours hatch it. Your active pet grows from fasts and sessions. Next egg in ${n} session${n === 1 ? '' : 's'}.${p.eggs.length >= C.maxEggs ? ' Your nest is full, so the next egg becomes XP.' : ''}</div></div>`;
+}
+// The hatch sheet: the new pet big with a pop-in, what it does, and Make active. A duplicate gives its XP to the pet you already have.
+export function petSheet(g, ui) {
+  const id = ui.species, nm = petName(id), o = g.pets.owned[id], on = activePet(g) === id; if (!o) return { title: 'Pet', body: '<p class="small muted">That pet is gone.</p>' };
+  const head = ui.dupe ? `Another ${esc(nm)}. Yours gained ${CONFIG.pets.dupeXp} XP.${ui.up ? ` It reached Lv ${o.lv}.` : ''}` : `${aOrAn(esc(nm))} hatched!`;
+  return { title: ui.dupe ? 'Egg hatched' : 'New pet', body: `<div class="pt-hatch"><div class="pt-big"><span class="pt-pop">${petImg(id, 8)}</span></div><p class="pt-msg" role="status" aria-live="polite">${head}</p>
+    <p class="small muted">Lv ${o.lv}: ${esc(petText(id, o.lv))}. Grows from fasting hours and sessions while active.</p>
+    <div class="pt-btns">${on ? '<button class="btn soft" disabled aria-label="This is your active pet">Active pet</button>' : `<button class="btn" data-act="makeActive" data-id="${id}" aria-label="Make ${esc(nm)} your active pet">Make active</button>`}<button class="btn soft" data-act="closeSheet" aria-label="Close">Done</button></div></div>` };
+}
 const WAIT_TXT = 'Waiting at the boss door. Train to earn a key.';
 export function awayHtml(a) {
   if (!a) return '';
@@ -264,9 +294,9 @@ function fitBadge(b) {
 }
 // 'Crypt, floor 34: your hero fights a ghost. Crypt: enemies regenerate. Burst damage helps.'
 export function canvasLabel(g) {
-  const n = enemyName(g.floor, isBoss(g.floor)), who = isBoss(g.floor) ? `the ${n}` : `${/^[aeiou]/.test(n) ? 'an' : 'a'} ${n}`;
-  if (atDoor(g)) return `${zoneOf(g.floor).name}, floor ${g.floor}: your hero waits at the closed door of ${who}. Train to earn a boss key.`;
-  return `${zoneOf(g.floor).name}, floor ${g.floor}: your hero fights ${who}. ${traitLine(g.floor)}`;
+  const n = enemyName(g.floor, isBoss(g.floor)), who = isBoss(g.floor) ? `the ${n}` : `${/^[aeiou]/.test(n) ? 'an' : 'a'} ${n}`, pet = activePet(g), pn = pet ? `, with their ${petName(pet)} beside them` : '';
+  if (atDoor(g)) return `${zoneOf(g.floor).name}, floor ${g.floor}: your hero waits at the closed door of ${who}${pn}. Train to earn a boss key.`;
+  return `${zoneOf(g.floor).name}, floor ${g.floor}: your hero fights ${who}${pn}. ${traitLine(g.floor)}`;
 }
 export function viewTower(state) {
   const g = ensureGame(state); ensureBounty(state);
@@ -280,11 +310,12 @@ export function viewTower(state) {
     ${restedPending(state, todayStr()) ? `<p class="tw-rested" role="status"><span aria-hidden="true">&#9790;</span> Rested: +${Math.round(CONFIG.restedBonus * 100)}% Sweat on your next session</p>` : ''}</div>
   <div class="section"><h2 class="title">Weekly bounty</h2><div class="tw-card" id="tw-bounty">${bountyHtml(state)}</div></div>
   <div class="section"><h2 class="title">Hero</h2><div class="tw-card">${['atk', 'hp', 'spd'].map((s) => statRow(g, s)).join('')}</div></div>
+  <div class="section"><h2 class="title">Pets</h2><div class="tw-card" id="tw-pets" data-sig="${esc(JSON.stringify(g.pets))}">${petsHtml(g)}</div></div>
   <div class="section"><h2 class="title">Gear</h2><div class="tw-card" id="tw-gear">${gearHtml(g)}</div></div>
   <div class="section"><h2 class="title">Focus upgrades</h2>${capLineHtml(g)}<div class="tw-card" id="tw-focus" data-sig="${focusShown(g).sig}">${focusHtml(g)}</div><p class="small muted tw-note">Spend Focus on the Forge too: tap a gear slot above. Beating a boss for the first time can unlock more upgrades.</p></div>
   <div class="section"><h2 class="title">Soul tree</h2><div class="tw-card" id="tw-souls">${TALENTS.map((k) => talentRow(g, k)).join('')}${respecRow(g)}</div></div>
   ${asc}
-  <div class="section"><h2 class="title">How you earn</h2><div class="tw-card tw-how"><p><b><span aria-hidden="true">&#9889;</span> Sweat</b> from training. Full session 100, minimum day 40, times your streak bonus (up to &times;1.5). Only 2 sessions a day pay, the 2nd half.</p><p><b>&#9889; Bonus</b> level-up +300 and an Ascend token, new best +100.</p><p><b>&#9670; Focus</b> from fasts that reach your &ldquo;counts after&rdquo; hours: 30, plus 5 for each extra hour, up to 80.</p><p><b>Weekly bounty</b> a goal for the week from your real training. Claim it for a chest with a rare or better item and a boss key, until the Monday after it ends.</p><p><b>Gear sets</b> each move has a 3 piece set. Level up that move in real life to get a piece. Wear 2 or 3 pieces for bonuses. <b>Rest days</b> you plan in Settings keep your streak, and the next session after one earns Rested (+10% Sweat).</p><p><b><span aria-hidden="true">&#128273;</span> Boss keys</b> from training: 1 for each session (the first 2 a day, minimum days count) and 1 more for a level-up. A boss needs a key. You hold up to ${CONFIG.keyCap}, and a lost boss fight keeps its key.</p><p><b>&#10022; Souls</b> from ascending, spent on talents. Missed days cost nothing. The hero keeps climbing.</p></div></div>`;
+  <div class="section"><h2 class="title">How you earn</h2><div class="tw-card tw-how"><p><b><span aria-hidden="true">&#9889;</span> Sweat</b> from training. Full session 100, minimum day 40, times your streak bonus (up to &times;1.5). Only 2 sessions a day pay, the 2nd half.</p><p><b>&#9889; Bonus</b> level-up +300 and an Ascend token, new best +100.</p><p><b>&#9670; Focus</b> from fasts that reach your &ldquo;counts after&rdquo; hours: 30, plus 5 for each extra hour, up to 80.</p><p><b>Weekly bounty</b> a goal for the week from your real training. Claim it for a chest with a rare or better item and a boss key, until the Monday after it ends.</p><p><b>Pets</b> every ${CONFIG.pets.every} sessions lays an egg (you hold up to ${CONFIG.pets.maxEggs}). Each fasting hour warms the first egg, and it hatches at ${CONFIG.pets.need} hours. Your active pet grows from fasts and sessions and gives a bonus.</p><p><b>Gear sets</b> each move has a 3 piece set. Level up that move in real life to get a piece. Wear 2 or 3 pieces for bonuses. <b>Rest days</b> you plan in Settings keep your streak, and the next session after one earns Rested (+10% Sweat).</p><p><b><span aria-hidden="true">&#128273;</span> Boss keys</b> from training: 1 for each session (the first 2 a day, minimum days count) and 1 more for a level-up. A boss needs a key. You hold up to ${CONFIG.keyCap}, and a lost boss fight keeps its key.</p><p><b>&#10022; Souls</b> from ascending, spent on talents. Missed days cost nothing. The hero keeps climbing.</p></div></div>`;
 }
 
 const R = (x, c, X, Y, w, h) => { x.fillStyle = c; x.fillRect(X, Y, w, h); };
@@ -394,6 +425,8 @@ export function refreshTowerUi(state) {
   patch('respec', respecParts(g));
   document.querySelectorAll('[data-tw-asc]').forEach((e) => { e.disabled = !canAscend(g); });
   const be = document.getElementById('tw-bounty'); if (be) { const bh = bountyHtml(state); if (be.dataset.sig !== bh) { be.dataset.sig = bh; be.innerHTML = bh; } }
+  const pe = document.getElementById('tw-pets'), ps = JSON.stringify(g.pets);
+  if (pe && pe.dataset.sig !== ps) { const fo = document.activeElement, key = fo && pe.contains(fo) && fo.dataset ? [fo.dataset.act, fo.dataset.id] : null; pe.dataset.sig = ps; pe.innerHTML = petsHtml(g); if (key) { const b = [...pe.querySelectorAll('[data-act]')].find((x) => x.dataset.act === key[0] && x.dataset.id === key[1] && !x.disabled) || pe.querySelector(`[data-act="${key[0]}"]:not([disabled])`); if (b) b.focus({ preventScroll: true }); } }
   const ge = document.getElementById('tw-gear'), gs = JSON.stringify([g.gear, g.stash.length, stashMax(g)]); if (ge && ge.dataset.sig !== gs) { ge.dataset.sig = gs; ge.innerHTML = gearHtml(g); }
 }
 function updateUi(m, now) {
@@ -509,6 +542,11 @@ function paint(m, now, dt = 0) {
   const hStep = hf === 'strike' ? 2 : hf === 'windup' ? -1 : 0, fStep = ef === 'strike' ? -2 : ef === 'windup' ? 1 : 0;   // the small step that goes with each frame
   const lift = dying ? 0 : (LIFT[kind] || 0) + (LIFT[kind] && fx ? Math.round(Math.sin(now / 260) * 2) : 0);
   shadow(a, HERO[0], HERO[1] + 1, 9, 3);
+  const pid = activePet(g);
+  if (pid) {   // the active pet stands behind and left of the hero: 2 frame idle bob, a small hop as the enemy falls. Reduced motion: frame A, no hop
+    const pk = fx && dying ? Math.min(1, (p - f.t) / 0.5) : 0, pf = getPet(pid, fx && Math.floor((now + 250) / 500) % 2 ? 1 : 0), pcx = HERO[0] - 16;
+    shadow(a, pcx, HERO[1] + 1, 6, 2); a.drawImage(pf.img, Math.round(pcx - pf.px), HERO[1] + 2 - pf.h - Math.round(Math.sin(pk * Math.PI) * 4));
+  }
   if (alive && eA > 0) shadow(a, FOE[0], FOE[1] + 1, boss ? 13 : 9, boss ? 4 : 3);
   const hx = Math.round(HERO[0] - hs.px + hStep), hy = HERO[1] - hs.h + 3 - bobH, hurt = fx && now - m.hFlash < 80;
   if (down) { a.globalAlpha = 0.85; a.drawImage(hs.img, hx, hy); } else a.drawImage(hurt ? hs.flash : hs.img, hx, hy);
