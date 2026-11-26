@@ -181,6 +181,9 @@ export function finishSession(state, { startedAt, endedAt, minimum = false, sets
       // Sets marked est were never logged (the app pre-filled them), so they are history only and never drive progression.
       const mine = sets.filter((x) => x.moveId === moveId && x.level === cur && !x.est);
       if (!mine.length) continue;
+      // Level-up needs enough proof: at least 2 logged sets, or every set if the move had fewer than 2 this session.
+      const all = sets.filter((x) => x.moveId === moveId && x.level === cur).length;
+      const enough = mine.length >= Math.min(2, all);
       const [min, max] = rangeOf(moveId, cur, work);
       const step = MOVES[moveId].unit === 'sec' ? 5 : 1;
       const reps = mine.map((x) => x.reps);
@@ -198,7 +201,7 @@ export function finishSession(state, { startedAt, endedAt, minimum = false, sets
 
       mv.level = cur;
       if (reps.every((r) => r >= max)) {
-        const nl = nextUsable(moveId, cur, bar);
+        const nl = enough ? nextUsable(moveId, cur, bar) : undefined;
         if (nl !== undefined) {
           mv.level = nl; mv.target = rangeOf(moveId, nl, work)[0]; mv.missStreak = 0;
           pushEv('levelUp', nl, nl);
