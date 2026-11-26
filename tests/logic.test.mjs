@@ -820,6 +820,30 @@ test('progression: missing twice at level 0 sets target to range min, with no le
   assert.ok(!r.events.some((e) => e.type === 'levelDown'));
 });
 
+test('progression: one logged set at max out of 3 does not level up; target holds at max', () => {
+  const s = withMove(fresh(), 'hpush', { level: 0, target: 8, calibrated: true });
+  const [, hi] = L.rangeOf('hpush', 0, s.settings.workSec);
+  const r = finish(s, [{ moveId: 'hpush', level: 0, reps: hi }, { moveId: 'hpush', level: 0, reps: 8, est: true }, { moveId: 'hpush', level: 0, reps: 8, est: true }]);
+  assert.equal(r.state.moves.hpush.level, 0);
+  assert.equal(r.state.moves.hpush.target, hi);
+  assert.ok(!r.events.some((e) => e.type === 'levelUp'));
+});
+
+test('progression: two logged sets at max level up even with an est set', () => {
+  const s = withMove(fresh(), 'hpush', { level: 0, target: 8, calibrated: true });
+  const [, hi] = L.rangeOf('hpush', 0, s.settings.workSec);
+  const r = finish(s, [{ moveId: 'hpush', level: 0, reps: hi }, { moveId: 'hpush', level: 0, reps: hi }, { moveId: 'hpush', level: 0, reps: 8, est: true }]);
+  assert.equal(r.state.moves.hpush.level, 1);
+  assert.ok(r.events.some((e) => e.type === 'levelUp'));
+});
+
+test('progression: a move with only one set this session can level up from it', () => {
+  const s = withMove(fresh(), 'hpush', { level: 0, target: 8, calibrated: true });
+  const [, hi] = L.rangeOf('hpush', 0, s.settings.workSec);
+  const r = finish(s, [{ moveId: 'hpush', level: 0, reps: hi }]);
+  assert.equal(r.state.moves.hpush.level, 1);
+});
+
 test('store: a corrupt saved state is copied aside before defaults load', () => {
   const mem = { [store.STORAGE_KEY]: '{not json' };
   globalThis.localStorage = { getItem: (k) => mem[k] ?? null, setItem: (k, v) => { mem[k] = v; }, removeItem: (k) => { delete mem[k]; } };
@@ -860,4 +884,9 @@ test('store: live session save, load, clear and resume info', () => {
     mem[store.LIVE_KEY] = 'garbage';
     assert.equal(store.loadLive(), null);
   } finally { delete globalThis.localStorage; }
+});
+
+test('store: liveInfo for a finished session that failed to save keeps every set and cannot resume', () => {
+  const live = { plan: { minutes: 10 }, startMs: 0, pausedTotal: 0, savedAt: 9.5 * 60000, done: 10 };
+  assert.deepEqual(store.liveInfo(live, 9.6 * 60000), { completed: 10, canResume: false, minute: 10 });
 });
