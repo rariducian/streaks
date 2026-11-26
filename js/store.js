@@ -29,11 +29,39 @@ export function normalise(raw) {
 }
 
 export function load() {
+  let text = null;
   try {
-    const text = globalThis.localStorage?.getItem(STORAGE_KEY);
+    text = globalThis.localStorage?.getItem(STORAGE_KEY);
     if (text) return normalise(migrate(JSON.parse(text)));
-  } catch (e) { /* fall through to defaults */ }
+  } catch (e) {
+    // Damaged data: keep the raw text aside before the next save replaces it. The first copy is never overwritten.
+    try { if (text && globalThis.localStorage.getItem(STORAGE_KEY + '.corrupt') == null) globalThis.localStorage.setItem(STORAGE_KEY + '.corrupt', text); } catch (e2) { /* ignore */ }
+  }
   return defaultState();
+}
+
+/* ---------- live session ----------
+   The running EMOM session is saved on every phase change and log, so iOS closing the app does not lose it. */
+export const LIVE_KEY = 'streaks.live';
+const RESUME_PAUSED_MS = 3 * 3600e3;   // a paused session can be resumed for 3 hours
+export function saveLive(live) {
+  try { globalThis.localStorage.setItem(LIVE_KEY, JSON.stringify(live)); return true; } catch (e) { return false; }
+}
+export function loadLive() {
+  try {
+    const d = JSON.parse(globalThis.localStorage?.getItem(LIVE_KEY) || 'null');
+    return d && typeof d === 'object' && d.plan && Number.isFinite(d.startMs) && Array.isArray(d.logs) ? d : null;
+  } catch (e) { return null; }
+}
+export function clearLive() { try { globalThis.localStorage.removeItem(LIVE_KEY); } catch (e) { /* ignore */ } }
+// completed: whole minutes done by the last save (or pause). canResume: the session window is still open now.
+export function liveInfo(live, now = Date.now()) {
+  const total = live.plan.minutes, off = live.pausedTotal || 0;
+  const lastKnown = live.pausedAt ?? live.savedAt ?? live.startMs;
+  const completed = Math.max(0, Math.min(total, Math.floor((lastKnown - live.startMs - off) / 60000)));
+  const elNow = (live.pausedAt ?? now) - live.startMs - off;
+  const canResume = live.pausedAt != null ? now - live.pausedAt < RESUME_PAUSED_MS && elNow < total * 60000 : elNow < total * 60000;
+  return { completed, canResume, minute: Math.min(total, Math.floor(Math.max(0, elNow) / 60000) + 1) };
 }
 
 // Returns true if saved, false if storage is missing or full.

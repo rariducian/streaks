@@ -178,7 +178,8 @@ export function finishSession(state, { startedAt, endedAt, minimum = false, sets
       const mv = s.moves[moveId] || (s.moves[moveId] = defaultMove(moveId));
       const cur = effectiveLevel(s, moveId);
       // Only sets at the move's current level count (a set with level null is retired history and never counts).
-      const mine = sets.filter((x) => x.moveId === moveId && x.level === cur);
+      // Sets marked est were never logged (the app pre-filled them), so they are history only and never drive progression.
+      const mine = sets.filter((x) => x.moveId === moveId && x.level === cur && !x.est);
       if (!mine.length) continue;
       const [min, max] = rangeOf(moveId, cur, work);
       const step = MOVES[moveId].unit === 'sec' ? 5 : 1;
@@ -188,7 +189,7 @@ export function finishSession(state, { startedAt, endedAt, minimum = false, sets
 
       // PB: best single set at this move+level vs earlier sessions (needs a prior best).
       let prevBest = 0;
-      for (const ps of prior) for (const x of ps.sets) if (x.moveId === moveId && x.level === cur) prevBest = Math.max(prevBest, x.reps);
+      for (const ps of prior) for (const x of ps.sets) if (x.moveId === moveId && x.level === cur && !x.est) prevBest = Math.max(prevBest, x.reps);
       const best = Math.max(...reps);
       const pushEv = (type, level, value) => {
         const ev = { id: makeId(new Date(at)) + events.length, at, type, moveId, level, value };
@@ -214,11 +215,15 @@ export function finishSession(state, { startedAt, endedAt, minimum = false, sets
           mv.missStreak += 1;
           if (mv.missStreak >= 2) {
             const pl = prevUsable(moveId, cur, bar);
-            if (pl !== undefined) mv.level = pl;
-            const [lo, hi] = rangeOf(moveId, mv.level, work);
-            mv.target = Math.round((lo + hi) / 2);
             mv.missStreak = 0;
-            pushEv('levelDown', mv.level, mv.level);
+            if (pl !== undefined) {
+              mv.level = pl;
+              const [lo, hi] = rangeOf(moveId, pl, work);
+              mv.target = Math.round((lo + hi) / 2);
+              pushEv('levelDown', pl, pl);
+            } else {
+              mv.target = min;   // already the easiest level: ease the target to the range min (never raise it), no event
+            }
           }
         } else {
           mv.missStreak = 0;
@@ -434,7 +439,7 @@ export function moveTrend(state, today, weeks = 8) {
       const weekEnd = addDays(weekStart, 6);
       let top = -1, best = 0;
       for (const se of state.sessions) if (se.date >= weekStart && se.date <= weekEnd) for (const x of se.sets) {
-        if (x.moveId !== m.id || x.level == null) continue;
+        if (x.moveId !== m.id || x.level == null || x.est) continue;   // est = pre-filled, never logged
         if (x.level > top) { top = x.level; best = 0; }
         if (x.level === top) best = Math.max(best, x.reps || 0);
       }
@@ -458,7 +463,7 @@ export function moveProgress(state) {
     const range = rangeOf(m.id, level, workOf(state));
     const frac = range[1] > range[0] ? clamp((ms.target - range[0]) / (range[1] - range[0]), 0, 1) : 1;
     let best = 0;
-    for (const se of state.sessions) for (const x of se.sets) if (x.moveId === m.id && x.level === level) best = Math.max(best, x.reps);
+    for (const se of state.sessions) for (const x of se.sets) if (x.moveId === m.id && x.level === level && !x.est) best = Math.max(best, x.reps);
     return {
       moveId: m.id, name: m.name, unit: m.unit, level, levelName: m.levels[level].name, idx, frac,
       levelsTotal: usable.length, target: clamp(ms.target, range[0], range[1]), range, capped: isCapped(m.id, level, workOf(state)),
