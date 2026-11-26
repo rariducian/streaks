@@ -240,16 +240,25 @@ export function finishSession(state, { startedAt, endedAt, minimum = false, sets
 
 export const trainingDates = (state) => [...new Set(state.sessions.map((x) => x.date))].sort();
 
+const FAST_SPAN_MAX_DAYS = 31;   // cap per fast, so a bad import cannot mark months
 export function fastingDates(state, now = new Date()) {
   const minMs = state.settings.fastMinHours * HOUR;
   const set = new Set();
-  for (const f of state.fasts) {
-    const start = new Date(f.start).getTime();
-    if (f.end) {
-      if (new Date(f.end).getTime() - start >= minMs) set.add(todayStr(new Date(f.end)));
-    } else if (now.getTime() - start >= minMs) {
-      set.add(todayStr(now));
+  // A qualifying fast counts for every day after its start day, up to the day it ends (or today, if running).
+  // So a 48 h fast never leaves a gap day mid-fast; an overnight fast still counts only on the morning it ends.
+  const addSpan = (start, end) => {
+    const last = todayStr(end), d = new Date(start); d.setHours(12, 0, 0, 0);
+    for (let i = 0; i < FAST_SPAN_MAX_DAYS; i++) {
+      d.setDate(d.getDate() + 1);
+      const ds = todayStr(d); if (ds > last) break;
+      set.add(ds);
     }
+    set.add(last);
+  };
+  for (const f of state.fasts) {
+    const start = new Date(f.start);
+    const end = f.end ? new Date(f.end) : now;
+    if (end.getTime() - start.getTime() >= minMs) addSpan(start, end);
   }
   return [...set].sort();
 }
