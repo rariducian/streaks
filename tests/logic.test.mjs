@@ -383,6 +383,31 @@ test('fastingDates with min hours and running fast', () => {
   assert.deepEqual(L.fastingDates(s, D(2026, 3, 5, 20)), ['2026-03-02', '2026-03-04']);
 });
 
+test('fastingDates: a 48 h fast counts every day after its start day', () => {
+  const s = fresh();
+  s.fasts = [{ id: 'a', start: D(2026, 11, 5, 20).toISOString(), end: D(2026, 11, 7, 20).toISOString(), goalHours: 48, note: '', mood: null }];
+  assert.deepEqual(L.fastingDates(s, D(2026, 11, 8, 9)), ['2026-11-06', '2026-11-07']);
+  // daily 16 h fasts end on 4 and 5 Nov, then the 48 h fast starts on the evening of 5 Nov: no gap day
+  s.fasts.push({ id: 'b', start: D(2026, 11, 3, 20).toISOString(), end: D(2026, 11, 4, 12).toISOString(), goalHours: 16, note: '', mood: null });
+  s.fasts.push({ id: 'c', start: D(2026, 11, 4, 20).toISOString(), end: D(2026, 11, 5, 12).toISOString(), goalHours: 16, note: '', mood: null });
+  const st = L.computeStreak(L.fastingDates(s, D(2026, 11, 8, 9)), '2026-11-07');
+  assert.equal(st.current, 4, '4, 5, 6 and 7 Nov in a row, with no freeze used');
+  assert.deepEqual(st.frozenDates, [], 'no freeze used');
+});
+
+test('fastingDates: running multi-day fast marks each day after its start; short running fast marks nothing', () => {
+  const s = fresh();
+  s.fasts = [{ id: 'a', start: D(2026, 11, 5, 20).toISOString(), end: null, goalHours: 72, note: '', mood: null }];
+  assert.deepEqual(L.fastingDates(s, D(2026, 11, 6, 6)), [], '10 h is under the minimum');
+  assert.deepEqual(L.fastingDates(s, D(2026, 11, 8, 9)), ['2026-11-06', '2026-11-07', '2026-11-08']);
+});
+
+test('fastingDates: a fast spanning more than 31 days marks at most 31 days plus its end day', () => {
+  const s = fresh();
+  s.fasts = [{ id: 'a', start: D(2026, 1, 1, 8).toISOString(), end: D(2026, 6, 1, 8).toISOString(), goalHours: 16, note: '', mood: null }];
+  assert.equal(L.fastingDates(s, D(2026, 6, 2)).length, 32);
+});
+
 test('start/end/edit/delete fast', () => {
   let s = L.startFast(fresh(), D(2026, 3, 1, 20), 18);
   assert.equal(L.runningFast(s).goalHours, 18);
