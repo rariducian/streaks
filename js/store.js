@@ -61,6 +61,8 @@ export function liveInfo(live, now = Date.now()) {
   const completed = Math.max(0, Math.min(total, Math.floor((lastKnown - live.startMs - off) / 60000)));
   const elNow = (live.pausedAt ?? now) - live.startMs - off;
   const canResume = live.pausedAt != null ? now - live.pausedAt < RESUME_PAUSED_MS && elNow < total * 60000 : elNow < total * 60000;
+  // done is set when a finished session failed to save: it is complete, so it can only be saved, not resumed.
+  if (live.done != null) return { completed: Math.min(total, live.done), canResume: false, minute: total };
   return { completed, canResume, minute: Math.min(total, Math.floor(Math.max(0, elNow) / 60000) + 1) };
 }
 
