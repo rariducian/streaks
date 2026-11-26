@@ -6,7 +6,7 @@ import {
   deleteFast, fastStage, fastStats, moveTrend, moveProgress, recentEvents, growthOffer,
   acceptGrowth, dismissGrowth, barUnlockDue, setPullupBar, backupDue, markBackedUp, rangeOf, moveSeries, repTotals, sessionTotals, restFn, setRestDays, MAX_REST_DAYS, monthOf
 } from './logic.js';
-import { load, save, exportJSON, importJSON, normalise, STORAGE_KEY } from './store.js';
+import { load, save, exportJSON, importJSON, normalise, STORAGE_KEY, saveLive, loadLive, clearLive, liveInfo } from './store.js';
 import { migrate } from './logic.js';
 import { ensurePersist, idbStore, listSnaps, snapshot, restoreOffer, importConfirm, restoreConfirm, backupCardText, fmtSize } from './backup.js';
 import { CONFIG, ensureGame, syncRewards, offlineCatchUp, buyStat, buyFocus, canAscend, ascend, buyTalent, respec, hatchEgg, setPet, petName, forge, forgeCost, toggleLock, equip, findItem, atDoor, fightFloor, readyBoss } from './game/engine.js';
@@ -580,8 +580,14 @@ function initCalib(level) {
   const lv = level ?? pm.level, r = rng(id, lv);
   sess.calib = { id, pm, level: lv, range: r, max: Math.round((r[0] + r[1]) / 2), result: null };
 }
+// Save the running session so iOS closing the app does not lose it (see boot: resumeLive).
+function persistLive() {
+  const s = sess; if (!s || s.phase !== 'run') return;
+  saveLive({ minimum: s.minimum, plan: s.plan, startMs: s.startMs, pausedAt: s.pausedAt, pausedTotal: s.pausedTotal, workSec: s.workSec, logs: s.logs, touched: s.touched, savedAt: Date.now() });
+}
+function markTouched(i) { if (sess && sess.touched && i >= 0) sess.touched[i] = true; persistLive(); }
 function closeSession() {
-  clearInterval(ticker); ticker = null; unlockScreen(); sess = null;
+  clearInterval(ticker); ticker = null; unlockScreen(); sess = null; clearLive();
   $('#overlay').hidden = true; $('#overlay').innerHTML = ''; $('#overlay').classList.remove('rest'); document.body.classList.remove('lock'); render();
 }
 const unitWord = (m) => m.unit === 'sec' ? 'seconds' : 'reps';
@@ -657,7 +663,8 @@ function renderSession() {
     const sm = s.summary;
     mid = `<div class="celebrate">${sm.events.length ? '&#127881;' : '&#9989;'}</div><div class="mname">${sm.minimum ? 'Minimum day done' : 'Session done'}</div>
       <div class="lname">${sm.streak} day training streak</div>
-      <table class="sumtable"><tr><th>Min</th><th>Move</th><th>${'Logged'}</th></tr>${sm.rows.map((r) => `<tr><td>${r.i}</td><td>${esc(r.name)}<div class="small muted">${esc(r.lvl)}${r.side ? ' &middot; ' + sideWord(r.side) : ''}</div></td><td>${r.reps}${r.unit === 'sec' ? 's' : ''}</td></tr>`).join('')}</table>
+      <table class="sumtable"><tr><th>Min</th><th>Move</th><th>${'Logged'}</th></tr>${sm.rows.map((r) => `<tr><td>${r.i}</td><td>${esc(r.name)}<div class="small muted">${esc(r.lvl)}${r.side ? ' &middot; ' + sideWord(r.side) : ''}</div></td><td>${r.est ? '<span class="muted" title="Not logged">~' : ''}${r.reps}${r.unit === 'sec' ? 's' : ''}${r.est ? '</span>' : ''}</td></tr>`).join('')}</table>
+      ${!sm.minimum && sm.rows.some((r) => r.est) ? '<p class="small muted">~ means you did not log that set. Only the sets you logged move your targets.</p>' : ''}
       ${sm.totals && sm.totals.length ? `<div class="sumtot"><div class="small muted">This session</div>${sm.totals.map((t) => `${esc(noun(t.moveId))} <b class="tnum">${fmtAmt(t.total, t.unit)}</b>${t.bothSides ? ' <span class="muted">(both sides)</span>' : ''}`).join(' &middot; ')}</div>` : ''}
       ${sm.events.map((e) => { const [, ic, t] = evLabel(e); return `<div class="evcard">${ic} ${t}</div>`; }).join('')}
       ${sm.sweat > 0 ? `<div class="evcard"><span aria-hidden="true">&#9889;</span> +${sm.sweat} Sweat earned &middot; spend it in Tower</div>` : ''}
@@ -676,8 +683,9 @@ function startRun() {
   s.phase = 'run'; s.startMs = Date.now(); s.pausedAt = null; s.pausedTotal = 0; s.idx = 0; s.ph = 'work'; s.lastTick = null;
   s.workSec = s.plan.workSec;
   s.logs = s.plan.slots.map(() => null);   // filled when a slot reaches its rest (see fillLog)
+  s.touched = s.plan.slots.map(() => false);   // true once you change a slot's value; untouched sets are saved as est
   clearInterval(ticker); ticker = setInterval(tickSession, 150);
-  renderSession();
+  persistLive(); renderSession();
 }
 // One slot = one minute: work for workSec, then rest for the remainder.
 function tickSession() {
@@ -692,7 +700,7 @@ function tickSession() {
     if (ph === 'rest') fillLog(idx);
     s.idx = idx; s.ph = ph; s.lastTick = null;
     if (!s.pausedAt) beep(...(newSlot ? BEEP.minute : BEEP.rest));
-    renderSession(); return;
+    persistLive(); renderSession(); return;
   }
   const rem = Math.ceil(((ph === 'work' ? workMs : 60000) - within) / 1000);
   const t = $('#timer');
@@ -704,7 +712,8 @@ function finishRun(completed) {
   clearInterval(ticker); ticker = null; unlockScreen();
   const p = s.plan;
   for (let i = 0; i < completed; i++) fillLog(i);
-  const sets = p.slots.slice(0, completed).map((sl, i) => { const m = p.moves.find((x) => x.moveId === sl.moveId); return { moveId: sl.moveId, level: m.level, reps: s.logs[i], ...(sl.side ? { side: sl.side } : {}) }; });
+  const sets = p.slots.slice(0, completed).map((sl, i) => { const m = p.moves.find((x) => x.moveId === sl.moveId); return { moveId: sl.moveId, level: m.level, reps: s.logs[i], ...(sl.side ? { side: sl.side } : {}), ...(s.touched && !s.touched[i] ? { est: true } : {}) }; });
+  clearLive();
   const minimum = s.minimum || completed < p.minutes;
   const res = finishSession(state, { startedAt: new Date(s.startMs).toISOString(), endedAt: new Date().toISOString(), minimum, sets, minutes: p.minutes });
   state = res.state; try { save(state); } catch (e) { toast('Could not save.'); }
@@ -716,7 +725,7 @@ function finishRun(completed) {
     keys = r.keys; fight = fightFloor(g); pieces = r.pieces || [];
     save(state); const pn = petNews(r); if (pn) toast(pn);
   } catch (e) { sweat = 0; keys = 0; fight = 0; pieces = []; }
-  s.summary = { sweat, keys, fight, pieces, minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, unit: (getMove(x.moveId) || {}).unit })), totals: sessionTotals(sets) };
+  s.summary = { sweat, keys, fight, pieces, minimum, events: res.events || [], streak, rows: sets.map((x, i) => ({ i: i + 1, name: moveName(x.moveId), lvl: levelName(x), side: x.side || null, reps: x.reps, est: !!x.est, unit: (getMove(x.moveId) || {}).unit })), totals: sessionTotals(sets) };
   s.phase = 'summary'; renderSession();
 }
 async function endEarly() {
@@ -843,7 +852,7 @@ const act = {
     if (w === 'calib') { const u = s.calib.pm.unit === 'sec' ? 5 : 1; s.calib.max = Math.max(0, s.calib.max + d * u); $('#out-calib').value = s.calib.max; }
     else {
       const i = w === 'log' ? s.idx : s.idx - 1, pm = s.plan.moves.find((m) => m.moveId === s.plan.slots[i].moveId), u = pm.unit === 'sec' ? 5 : 1;
-      fillLog(i); s.logs[i] = Math.max(0, s.logs[i] + d * u); $('#out-' + w).value = s.logs[i];
+      fillLog(i); s.logs[i] = Math.max(0, s.logs[i] + d * u); $('#out-' + w).value = s.logs[i]; markTouched(i);
     }
   },
   calibGo: () => { const c = sess.calib; c.result = placeFromCalibration(state, c.id, c.level, c.max); renderSession(); },
@@ -852,7 +861,7 @@ const act = {
   calibHere: () => { const c = sess.calib, r = c.result; calibApply(r.level ?? c.level, r.tooEasy ? c.range[1] : c.range[0]); },
   calibOk: () => { const c = sess.calib; calibApply(c.result.level ?? c.level, c.result.target); },
   beginRun: () => startRun(),
-  pause: () => { const s = sess; if (s.pausedAt) { s.pausedTotal += Date.now() - s.pausedAt; s.pausedAt = null; unlockAudio(); lockScreen(); } else { s.pausedAt = Date.now(); } renderSession(); },
+  pause: () => { const s = sess; if (s.pausedAt) { s.pausedTotal += Date.now() - s.pausedAt; s.pausedAt = null; unlockAudio(); lockScreen(); } else { s.pausedAt = Date.now(); } persistLive(); renderSession(); },
   endEarly: () => endEarly(),
   repRange: (el) => { repRange = el.dataset.range; render(); },
   repRow: (el) => { const id = el.dataset.move; if (repOpen.has(id)) repOpen.delete(id); else repOpen.add(id); render(); },
@@ -903,7 +912,7 @@ const changes = {
   stepSet: (el) => {
     const s = sess; if (!s) return;
     const n = Math.max(0, Math.floor(Number(String(el.value).replace(/\D/g, ''))) || 0), w = el.dataset.w;
-    if (w === 'calib') s.calib.max = n; else s.logs[w === 'log' ? s.idx : s.idx - 1] = n;
+    if (w === 'calib') s.calib.max = n; else { const i = w === 'log' ? s.idx : s.idx - 1; s.logs[i] = n; markTouched(i); }
     el.value = n;
   },
   invSort: (el) => { if (sheet && sheet.type === 'inv') { sheet.sort = el.value; sheet.order = null; invPatch(state, sheet); } },
@@ -928,7 +937,7 @@ document.addEventListener('change', (e) => {
   const f = el.dataset && el.dataset.change; if (f && changes[f]) changes[f](el);
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') return;
+  if (document.visibilityState !== 'visible') { persistLive(); return; }
   if (sess && sess.phase === 'run') { if (ac && ac.state === 'suspended') ac.resume(); if (!wl && !sess.pausedAt) lockScreen(); tickSession(); }
   updateFastLive();
 });
@@ -940,7 +949,33 @@ askPersist();
   let text = null; try { text = localStorage.getItem(STORAGE_KEY); } catch (e) { /* ignore */ }
   const x = await restoreOffer(text, bak); if (!x) return;
   if (await ask(restoreConfirm(x))) { commit(normalise(migrate(structuredClone(x.state)))); toast('Restored.'); }
-})();
+})().finally(resumeLive);
+
+// A session that was running when the app closed: offer to resume it, else to save what was done.
+async function resumeLive() {
+  const lv = loadLive(); if (!lv || sess) return;
+  const info = liveInfo(lv), p = lv.plan, name = `${p.dayName} \u00b7 ${lv.minimum ? 'Minimum day' : 'EMOM ' + p.minutes}`;
+  const build = () => {
+    unmountTower();
+    sess = { phase: 'run', minimum: lv.minimum, plan: p, queue: [], ci: 0, calib: null, wlOk: null, startMs: lv.startMs, pausedAt: lv.pausedAt ?? null, pausedTotal: lv.pausedTotal || 0,
+      workSec: lv.workSec || p.workSec, logs: lv.logs, touched: lv.touched || p.slots.map(() => false), lastTick: null };
+    const el = (sess.pausedAt ?? Date.now()) - sess.startMs - sess.pausedTotal;
+    sess.idx = Math.max(0, Math.min(p.minutes - 1, Math.floor(el / 60000)));
+    sess.ph = el % 60000 < sess.workSec * 1000 ? 'work' : 'rest';
+    for (let i = 0; i < sess.idx; i++) fillLog(i);
+    if (sess.ph === 'rest') fillLog(sess.idx);
+    sheet = null; renderSheet(); renderPill(); $('#overlay').hidden = false; document.body.classList.add('lock');
+  };
+  if (info.canResume && await ask({ title: 'Resume your session?', message: `${name}, minute ${info.minute}. ${lv.pausedAt != null ? 'It is paused.' : 'The clock kept running while the app was closed.'}`, confirmLabel: 'Resume session' })) {
+    build(); unlockAudio(); if (!sess.pausedAt) lockScreen();
+    clearInterval(ticker); ticker = setInterval(tickSession, 150); persistLive(); renderSession(); return;
+  }
+  if (info.completed >= 3 && await ask({ title: 'Save your unfinished session?', message: `${info.completed} sets were done before the app closed. ${info.completed < p.minutes || lv.minimum ? 'They will be saved as a minimum day.' : ''}`, confirmLabel: 'Save sets' })) {
+    build(); finishRun(info.completed); return;
+  }
+  clearLive();
+  if (info.completed < 3) toast('An unfinished session under 3 minutes was discarded.');
+}
 setInterval(updateFastLive, 1000);
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });

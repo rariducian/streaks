@@ -784,3 +784,80 @@ test('sessionTotals sums per move and flags both sides', () => {
   assert.deepEqual(L.sessionTotals([]), []);
   assert.deepEqual(L.sessionTotals(undefined), []);
 });
+
+/* ---- fix/progression-and-session-safety ---- */
+test('progression: sets marked est (never logged) do not change targets, PB or missStreak', () => {
+  const s = withMove(fresh(), 'hpush', { level: 0, target: 8, calibrated: true, missStreak: 1 });
+  const est = sets('hpush', 0, 8).map((x) => ({ ...x, est: true }));
+  const r = finish(s, est);
+  assert.equal(r.state.moves.hpush.target, 8, 'untouched pre-filled sets must not raise the target');
+  assert.equal(r.state.moves.hpush.missStreak, 1);
+  assert.equal(r.events.length, 0);
+  assert.equal(r.state.sessions.at(-1).sets.length, 5, 'est sets are still kept in history');
+});
+
+test('progression: logged sets count even when mixed with est sets', () => {
+  const s = withMove(fresh(), 'hpush', { level: 0, target: 8, calibrated: true });
+  const mixed = [{ moveId: 'hpush', level: 0, reps: 10 }, { moveId: 'hpush', level: 0, reps: 11 }, { moveId: 'hpush', level: 0, reps: 8, est: true }];
+  const r = finish(s, mixed);
+  assert.equal(r.state.moves.hpush.target, 11, 'lowest logged set (10) + 1');
+});
+
+test('progression: est sets are ignored when finding a previous best', () => {
+  let s = withMove(fresh(), 'hpush', { level: 0, target: 8, calibrated: true });
+  s = finish(s, [{ moveId: 'hpush', level: 0, reps: 9 }, { moveId: 'hpush', level: 0, reps: 14, est: true }]).state;
+  const r = finish(s, [{ moveId: 'hpush', level: 0, reps: 10 }], { startedAt: D(2026, 2, 3, 7), endedAt: D(2026, 2, 3, 7, 10) });
+  assert.ok(r.events.some((e) => e.type === 'pb' && e.value === 10), 'PB beats the best logged set (9), not the guessed 14');
+});
+
+test('progression: missing twice at level 0 sets target to range min, with no levelDown event', () => {
+  const s = withMove(fresh(), 'hpush', { level: 0, target: 6, calibrated: true, missStreak: 1 });
+  const r = finish(s, sets('hpush', 0, 2));
+  const [lo] = L.rangeOf('hpush', 0, s.settings.workSec);
+  assert.equal(r.state.moves.hpush.level, 0);
+  assert.equal(r.state.moves.hpush.target, lo, 'target must not rise to the mid-range');
+  assert.equal(r.state.moves.hpush.missStreak, 0);
+  assert.ok(!r.events.some((e) => e.type === 'levelDown'));
+});
+
+test('store: a corrupt saved state is copied aside before defaults load', () => {
+  const mem = { [store.STORAGE_KEY]: '{not json' };
+  globalThis.localStorage = { getItem: (k) => mem[k] ?? null, setItem: (k, v) => { mem[k] = v; }, removeItem: (k) => { delete mem[k]; } };
+  try {
+    const st = store.load();
+    assert.equal(st.sessions.length, 0);
+    assert.equal(mem[store.STORAGE_KEY + '.corrupt'], '{not json');
+    store.load();   // a second load never overwrites the first copy
+    mem[store.STORAGE_KEY] = '{also bad';
+    store.load();
+    assert.equal(mem[store.STORAGE_KEY + '.corrupt'], '{not json');
+  } finally { delete globalThis.localStorage; }
+});
+
+test('store: live session save, load, clear and resume info', () => {
+  const mem = {};
+  globalThis.localStorage = { getItem: (k) => mem[k] ?? null, setItem: (k, v) => { mem[k] = v; }, removeItem: (k) => { delete mem[k]; } };
+  try {
+    assert.equal(store.loadLive(), null);
+    const t0 = Date.UTC(2026, 0, 5, 7, 0, 0);
+    const live = { minimum: false, plan: { minutes: 10, slots: [] }, startMs: t0, pausedAt: null, pausedTotal: 0, logs: [8, 9, null], touched: [true, false, false], workSec: 40, savedAt: t0 + 4.5 * 60000 };
+    assert.equal(store.saveLive(live), true);
+    assert.deepEqual(store.loadLive(), live);
+    // reopened 2 minutes later: still inside the 10-minute window
+    let i = store.liveInfo(live, t0 + 6.5 * 60000);
+    assert.equal(i.completed, 4); assert.equal(i.canResume, true); assert.equal(i.minute, 7);
+    // reopened an hour later: too late to resume; completed comes from the last save, not from now
+    i = store.liveInfo(live, t0 + 60 * 60000);
+    assert.equal(i.completed, 4); assert.equal(i.canResume, false);
+    // paused: time stops at pausedAt
+    i = store.liveInfo({ ...live, pausedAt: t0 + 3.2 * 60000, savedAt: t0 + 3.2 * 60000 }, t0 + 30 * 60000);
+    assert.equal(i.completed, 3); assert.equal(i.canResume, true);
+    // a finished-length session reports all minutes
+    i = store.liveInfo({ ...live, savedAt: t0 + 11 * 60000 }, t0 + 12 * 60000);
+    assert.equal(i.completed, 10);
+    store.clearLive();
+    assert.equal(store.loadLive(), null);
+    mem[store.LIVE_KEY] = 'garbage';
+    assert.equal(store.loadLive(), null);
+  } finally { delete globalThis.localStorage; }
+});
