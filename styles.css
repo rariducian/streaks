@@ -5,7 +5,7 @@
   --green:#2EAA4F; --purple:#8A5CF6; --orange:#E08A00; --frozen:#9ED0FF; --amber:#FF9F0A; --restday:#E9C46A;
   /* text-safe variants (>=4.5:1 on their backgrounds); bright tokens above are for fills only */
   --green-text:#1F7A38; --purple-text:#6D3FE0; --orange-text:#A35F00; --red-text:#D70015; --blue-text:#0A5FB8;
-  --pill-o:#FFF3E0; --pill-g:#E8F7EC; --pill-p:#F1EBFF; --pill-b:#E6F1FF; --rest:#E8F1FB;
+  --pill-o:#FFF3E0; --pill-g:#E8F7EC; --pill-p:#F1EBFF; --pill-b:#E6F1FF; --rest:#E8F1FB; --work:#C2410C;
   --tab-bg:rgba(255,255,255,.82); --overlay:rgba(0,0,0,.35);
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;
 }
@@ -17,7 +17,7 @@
     --tab-bg:rgba(28,28,30,.8); --overlay:rgba(0,0,0,.6);
     --green-text:#32D74B; --purple-text:#B69CFF; --orange-text:#FFB340; --red-text:#FF6B62; --blue-text:#64B5FF;
     --restday:#8A6D1F;
-    --pill-o:#3d2a08; --pill-g:#0f3018; --pill-p:#2b2150; --pill-b:#102f4d; --rest:#0b1b2c;
+    --pill-o:#3d2a08; --pill-g:#0f3018; --pill-p:#2b2150; --pill-b:#102f4d; --rest:#0b1b2c; --work:#9A3412;
   }
 }
 /* Dynamic Type: 16px fallback first; Apple browsers then take the user's text size. 1rem = 17px body. */
@@ -226,8 +226,16 @@ textarea.note-in{width:100%;background:var(--card);border:0;border-radius:12px;p
 
 /* overlay */
 #overlay.rest{background:var(--rest)}
-.restlabel{font-size:clamp(2.4rem,14vw,3.6rem);font-weight:800;letter-spacing:-.03em;line-height:1.05}
-.nextup{background:var(--card);border-radius:16px;padding:10px 14px;font-size:0.941rem;font-weight:600;align-self:center;max-width:100%}
+.phaselabel{font-size:clamp(2.4rem,14vw,3.6rem);font-weight:800;letter-spacing:-.03em;line-height:1.05}
+.nextup{background:var(--card);border-radius:18px;padding:14px 18px;font-size:clamp(1.18rem,5.2vw,1.45rem);font-weight:700;line-height:1.3;align-self:stretch;max-width:100%;margin-top:10px}
+/* Work: a strong, warm screen so you can tell Work from Rest at a glance from the floor. */
+#overlay.work{background:var(--work);color:#fff}
+#overlay.work .kicker,#overlay.work .cue,#overlay.work .muted{color:rgba(255,255,255,.86)}
+#overlay.work .x,#overlay.work .btn.soft,#overlay.work .stepper button,#overlay.work .target,#overlay.work .samebtn,#overlay.work .warn,#overlay.work .chip{background:rgba(255,255,255,.18);color:#fff}
+#overlay.work .samebtn.on{background:transparent;color:rgba(255,255,255,.8)}
+#overlay.work .dots i{background:rgba(255,255,255,.3)}#overlay.work .dots i.done{background:rgba(255,255,255,.65)}#overlay.work .dots i.cur{background:#fff}
+#overlay.work .timer.low{color:#FFE08A}
+#overlay.work .ic,#overlay.work svg{color:#fff}
 #overlay.rest .nextup{background:var(--surface)}
 .btn.huge{width:100%;padding:20px;font-size:1.294rem}
 #overlay{position:fixed;inset:0;z-index:60;background:var(--bg);overflow:auto;animation:fade .2s}
@@ -560,3 +568,17 @@ body.fv-lock{overflow:hidden}
 .pt-btns{display:flex;gap:10px;justify-content:center;margin-top:16px}.pt-btns .btn{min-width:120px}
 @keyframes ptpop{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.15);opacity:1}100%{transform:scale(1)}}
 @media (prefers-reduced-motion:no-preference){.pt-pop{animation:ptpop .5s cubic-bezier(.2,.8,.2,1)}}
+
+/* Summary: the result first, then sets grouped by move. */
+.sumres{margin-top:14px}
+.evcard.quiet{font-weight:600;color:var(--muted)}
+.evcard.up .evic,.evcard.tg .evic{color:var(--green-text)}.evcard.pb .evic{color:var(--orange-text)}.evcard.dn .evic{color:var(--blue-text)}
+.sumsets{margin-top:14px;text-align:left}
+.sgrow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+.sgrow:last-child{border-bottom:0}
+.sgname{font-size:0.941rem;font-weight:600}
+.sgreps{font-size:1.06rem;font-weight:700;text-align:right;white-space:nowrap}
+.sgreps .est,.estkey{color:var(--muted);font-weight:500}
+.sgreps .sep{color:var(--muted);font-weight:400}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.line.calnote{color:var(--orange-text);font-weight:600}
