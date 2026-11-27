@@ -164,13 +164,15 @@ function renderPill() {
 // Today's session card. Shown on Today and on Fitness.
 function sessionHero(done) {
   const plan = sessionPlan(state);
-  const lines = plan.moves.map((m) => `<div class="line">${I.bolt}<span>${esc(m.levelName)} &middot; ${m.needsCalibration ? 'test set first' : m.target + (m.unit === 'sec' ? ' sec' : ' reps') + (m.perSide ? ' each side' : '')}</span></div>`).join('');
+  const nCal = plan.moves.filter((m) => m.needsCalibration).length;
+  const lines = plan.moves.map((m) => `<div class="line">${I.bolt}<span>${esc(m.levelName)}${m.needsCalibration ? '' : ' &middot; ' + m.target + (m.unit === 'sec' ? ' sec' : ' reps') + (m.perSide ? ' each side' : '')}</span></div>`).join('')
+    + (nCal ? `<div class="line calnote">${nCal === plan.moves.length ? 'First session: you do a test set of each move.' : `First you do a test set of ${nCal === 1 ? 'the new move' : `${nCal} new moves`}.`}</div>` : '');
   const rest = !done && restFn(state.settings)(todayStr());   // a planned rest day with no training: the streak is safe, Start stays
   const buttons = done
     ? `<div class="donebar">Done today &#10003;</div><div class="sub-actions"><button class="link" data-act="startSession">Train again</button><button class="link" data-act="startMin">Minimum day (3 min)</button></div>`
     : `<button class="btn block" data-act="startSession">Start</button><div class="sub-actions"><button class="link" data-act="startMin">Minimum day (3 min)</button></div>`;
   return `<div class="section"><h2 class="title">Today's session</h2>
-   <div class="hero"><div class="rowcard"><div class="poster ${esc(plan.dayId)}">${esc((dayShort[plan.dayId] || plan.dayName).toUpperCase())}<span class="spill o">Up next</span></div>
+   <div class="hero"><div class="rowcard"><div class="poster ${esc(plan.dayId)}">${esc((dayShort[plan.dayId] || plan.dayName).toUpperCase())}</div>
     <div class="rowbody"><div class="meta">Next in rotation</div><div class="rtitle">${esc(plan.dayName)} &middot; EMOM ${plan.minutes}</div>
     <div class="line">${I.clock}<span>${plan.minutes} min &middot; ${plan.workSec} s work, ${60 - plan.workSec} s rest</span></div>${lines}</div></div>${rest ? `<div class="restnote">${I.moon}<span>Rest day: your streak is safe</span></div>` : ''}${buttons}</div></div>`;
 }
@@ -597,7 +599,7 @@ const slotOf = (w) => (w === 'log' ? sess.idx : sess.idx - 1);
 function sameBtn(w) { const on = !!(sess.touched && sess.touched[slotOf(w)]); return `<button class="samebtn${on ? ' on' : ''}" data-act="same" data-w="${w}" aria-pressed="${on}">${on ? '&#10003; Logged' : '&#10003; Same'}</button>`; }
 function closeSession() {
   clearInterval(ticker); ticker = null; unlockScreen(); sess = null; clearLive();
-  $('#overlay').hidden = true; $('#overlay').innerHTML = ''; $('#overlay').classList.remove('rest'); document.body.classList.remove('lock'); render();
+  $('#overlay').hidden = true; $('#overlay').innerHTML = ''; $('#overlay').classList.remove('rest', 'work'); document.body.classList.remove('lock'); render();
 }
 const unitWord = (m) => m.unit === 'sec' ? 'seconds' : 'reps';
 function stepperHtml(id, val, small) { return `<div class="stepper ${small ? 'sm' : ''}"><button data-act="step" data-w="${id}" data-d="-1" aria-label="Less">&minus;</button><input type="text" inputmode="numeric" pattern="[0-9]*" id="out-${id}" value="${val}" data-change="stepSet" data-w="${id}" aria-label="Value"><button data-act="step" data-w="${id}" data-d="1" aria-label="More">+</button></div>`; }
@@ -617,10 +619,16 @@ function fillLog(i) {
   }
   s.logs[i] = s.plan.moves.find((m) => m.moveId === sl.moveId).target;
 }
+// Summary sets, grouped by move, level and side, in the order they first appear.
+function sumGroups(rows) {
+  const out = [], by = new Map();
+  for (const r of rows) { const k = `${r.name}|${r.lvl}|${r.side || ''}`; if (!by.has(k)) { const g = { name: r.name, lvl: r.lvl, side: r.side, sets: [] }; by.set(k, g); out.push(g); } by.get(k).sets.push(r); }
+  return out;
+}
 function renderSession() {
   const o = $('#overlay'); if (!sess) return;
   const s = sess, p = s.plan;
-  if (s.phase !== 'run') o.classList.remove('rest');
+  if (s.phase !== 'run') o.classList.remove('rest', 'work');
   let top = `<div class="ov-top"><span class="kicker">${esc(p.dayName)} &middot; ${s.minimum ? 'Minimum day' : 'EMOM ' + p.minutes}</span><button class="x" data-act="${s.phase === 'run' ? 'endEarly' : 'closeSess'}" aria-label="Close">${I.x}</button></div>`;
   let mid = '', bot = '';
   if (s.phase === 'calib') {
@@ -656,30 +664,30 @@ function renderSession() {
     if (s.ph === 'work') {
       const effort = pm.rir2 ? 'Stop about 2 reps before failure.' : 'Max out with good form. Stop when the next rep would break form.';
       const beat = pm.unit === 'sec' ? `Hold up to ${s.workSec} s` : `Beat ${pm.target}`;
-      mid = `${label}<div class="timer" id="timer">--:--</div><div class="dots">${dots}</div>
+      mid = `${label}<div class="phaselabel">Work</div><div class="timer" id="timer">--:--</div><div class="dots">${dots}</div>
       <div class="mname">${esc(pm.name)}</div><div class="lname">${esc(pm.levelName)} ${formChip(pm.moveId, pm.level, pm.levelName)}</div><div class="cue">${esc(pm.cue)}</div>
       <div class="cue">${effort}</div>
       <div class="target" style="margin-top:8px">${beat}</div>
       ${prev ? `<div class="prevrow"><span>Last set</span>${stepperHtml('prev', s.logs[s.idx - 1], true)}${sameBtn('prev')}</div>` : ''}${warn}`;
     } else {
-      mid = `${label}<div class="restlabel">Rest</div><div class="timer" id="timer">--:--</div><div class="dots">${dots}</div>
+      mid = `${label}<div class="phaselabel">Rest</div><div class="timer" id="timer">--:--</div><div class="dots">${dots}</div>
       <div class="kicker" style="margin-top:12px">${pm.unit === 'sec' ? 'Seconds held' : 'Reps this set'}</div>${stepperHtml('log', s.logs[s.idx])}${sameBtn('log')}
       <div class="nextup" id="nextup">${nx}</div>${warn}`;
     }
     bot = `<div class="two"><button class="btn soft" data-act="pause">${s.pausedAt ? 'Resume' : 'Pause'}</button><button class="btn soft" data-act="endEarly">End early</button></div>`;
-    o.classList.toggle('rest', s.ph === 'rest');
+    o.classList.toggle('rest', s.ph === 'rest'); o.classList.toggle('work', s.ph === 'work');
   } else if (s.phase === 'summary') {
     const sm = s.summary;
     mid = `<div class="celebrate">${sm.events.length ? '&#127881;' : '&#9989;'}</div><div class="mname">${sm.minimum ? 'Minimum day done' : 'Session done'}</div>
       <div class="lname">${sm.streak} day training streak</div>
-      <table class="sumtable"><tr><th>Min</th><th>Move</th><th>${'Logged'}</th></tr>${sm.rows.map((r) => `<tr><td>${r.i}</td><td>${esc(r.name)}<div class="small muted">${esc(r.lvl)}${r.side ? ' &middot; ' + sideWord(r.side) : ''}</div></td><td>${r.est ? '<span class="muted" title="Not logged">~' : ''}${r.reps}${r.unit === 'sec' ? 's' : ''}${r.est ? '</span>' : ''}</td></tr>`).join('')}</table>
-      ${!sm.minimum && sm.rows.some((r) => r.est) ? '<p class="small muted">~ means you did not log that set. Only the sets you logged move your targets.</p>' : ''}
+      <div class="sumres">${sm.events.length ? sm.events.map((e) => { const [c, ic, t] = evLabel(e); return `<div class="evcard ${c}"><span class="evic" aria-hidden="true">${ic}</span> ${t}</div>`; }).join('') : `<div class="evcard quiet">${sm.minimum ? 'Minimum day: your streak is kept. Targets stay the same.' : sm.rows.some((r) => !r.est) ? 'Targets stay the same. Beat them next time to move up.' : 'Targets stay the same: no sets were logged.'}</div>`}</div>
       ${sm.totals && sm.totals.length ? `<div class="sumtot"><div class="small muted">This session</div>${sm.totals.map((t) => `${esc(noun(t.moveId))} <b class="tnum">${fmtAmt(t.total, t.unit)}</b>${t.bothSides ? ' <span class="muted">(both sides)</span>' : ''}`).join(' &middot; ')}</div>` : ''}
-      ${sm.events.map((e) => { const [, ic, t] = evLabel(e); return `<div class="evcard">${ic} ${t}</div>`; }).join('')}
+      <div class="sumsets"><div class="small muted">Sets</div>${sumGroups(sm.rows).map((g) => `<div class="sgrow"><div class="sgname">${esc(g.name)}<div class="small muted">${esc(g.lvl)}${g.side ? ' &middot; ' + sideWord(g.side) : ''}</div></div><div class="sgreps tnum">${g.sets.map((r) => `<span class="${r.est ? 'est' : ''}">${r.reps}${r.unit === 'sec' ? 's' : ''}${r.est ? '<span class="sr-only"> not logged</span>' : ''}</span>`).join('<span class="sep" aria-hidden="true"> &middot; </span>')}</div></div>`).join('')}</div>
+      ${!sm.minimum && sm.rows.some((r) => r.est) ? '<p class="small muted"><span class="estkey">Grey</span> sets were not logged. Only the sets you log move your targets.</p>' : ''}
       ${sm.sweat > 0 ? `<div class="evcard"><span aria-hidden="true">&#9889;</span> +${sm.sweat} Sweat earned &middot; spend it in Tower</div>` : ''}
       ${(sm.pieces || []).map((p) => `<div class="evcard"><span aria-hidden="true">&#9876;</span> ${p.kind === 'upgrade' ? 'Duplicate upgraded your' : 'New set piece:'} ${esc(setLabel(p))}</div>`).join('')}
       ${sm.keys > 0 ? `<div class="evcard"><span aria-hidden="true">&#128273;</span> +${sm.keys} boss key${sm.keys === 1 ? '' : 's'} earned</div>` : ''}
-      ${sm.minimum ? '<p class="small muted">Minimum days keep your streak. They do not change your targets.</p>' : ''}`;
+`;
     bot = `${sm.fight ? '<button class="btn block" data-act="fightBoss"><span aria-hidden="true">&#9876;</span> Fight the boss</button>' : ''}${sm.sweat > 0 ? `<div class="two"><button class="btn soft" data-act="closeSess">Done</button><button class="btn ${sm.fight ? 'soft' : ''}" data-act="toTower">Open Tower</button></div>` : `<button class="btn block ${sm.fight ? 'soft' : ''}" data-act="closeSess">Done</button>`}`;
   }
   const scroll = o.firstElementChild ? o.firstElementChild.scrollTop : 0;
